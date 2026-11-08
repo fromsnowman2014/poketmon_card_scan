@@ -11,13 +11,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'CardCheck - 카드 시세 스캐너',
         short_name: 'CardCheck',
         description: '포켓몬 카드를 찍으면 시세를 알려주는 무료 앱',
-        theme_color: '#0A1224',
-        background_color: '#0A1224',
+        lang: 'ko',
+        theme_color: '#0A1020',
+        background_color: '#0A1020',
         display: 'standalone',
         orientation: 'portrait',
         start_url: '.',
@@ -45,10 +45,21 @@ export default defineConfig({
             options: { cacheName: 'card-data', networkTimeoutSeconds: 8, expiration: { maxEntries: 400, maxAgeSeconds: 60 * 60 * 24 * 7 } },
           },
           {
-            // Tesseract OCR engine + language data from the CDN.
-            urlPattern: /^https:\/\/(cdn\.jsdelivr\.net|tessdata\.projectnaptha\.com)\//,
+            // Tesseract OCR engine + language data (versioned URLs). The worker loads the engine with
+            // importScripts, which gives opaque responses: allow status 0 or scanning would need the network.
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/(tesseract\.js(-core)?@|@tesseract\.js-data\/)/,
             handler: 'CacheFirst',
-            options: { cacheName: 'ocr-assets', expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 90 } },
+            options: {
+              cacheName: 'ocr-assets',
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 90 },
+            },
+          },
+          {
+            // Pretendard stylesheet + its ~90 unicode-range subsets; kept apart so fonts never evict the OCR engine.
+            urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/pretendard@/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'fonts', expiration: { maxEntries: 120, maxAgeSeconds: 60 * 60 * 24 * 365 } },
           },
         ],
       },

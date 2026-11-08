@@ -1,0 +1,51 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-topbar);
+  padding: var(--safe-top) var(--safe-right) 0 var(--safe-left);
+  border-bottom: 1px solid transparent;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.topbar-scrolled {
+  background: var(--chrome);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  border-bottom-color: var(--border);
+}
+
+.topbar-inner {
+  display: grid;
+  grid-template-columns: minmax(var(--tap), 1fr) minmax(0, auto) minmax(var(--tap), 1fr);
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
+  padding: 0 12px;
+}
+
+.topbar-side {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.topbar-right {
+  justify-content: flex-end;
+  grid-column: 3;
+}
+
+.topbar-title {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  text-align: center;
+}
+
+.topbar-back {
+  background: transparent;
+  margin-left: -6px;
+}
+
+.topbar-back:active {
+  background: var(--surface-2);
+}

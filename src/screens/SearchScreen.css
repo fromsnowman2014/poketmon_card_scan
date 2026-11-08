@@ -1,0 +1,121 @@
+.search-lang {
+  min-width: 96px;
+  justify-content: center;
+}
+
+.search-note {
+  padding-inline: 4px;
+}
+
+.search-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.search-spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+.search-examples {
+  justify-content: center;
+}
+
+.search-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 359px) {
+  .search-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.search-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
+.search-card-art {
+  transition: transform var(--dur) var(--ease);
+}
+
+.search-card:active .search-card-art {
+  transform: scale(0.96);
+}
+
+.search-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.search-card-name {
+  display: block;
+  font-size: var(--fs-small);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.search-card-sub {
+  display: block;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--primary-text);
+}
+
+.search-card-set {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.search-card-num {
+  flex: none;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-card-art {
+  position: relative;
+  display: block;
+}
+
+.search-card-code {
+  position: absolute;
+  left: 50%;
+  bottom: 12%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 88%;
+  padding: 3px 10px 4px;
+  border-radius: var(--radius-sm);
+  background: #0b163399; /* on the card-back art, same in both themes */
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.search-card-code b {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}

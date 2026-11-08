@@ -1,0 +1,123 @@
+/* Design tokens. Dark is the default; App sets <html data-theme="dark|light"> (resolving 'system'). */
+:root {
+  color-scheme: dark;
+
+  /* Color */
+  --bg: #0a1020;
+  --surface: #111a2e;
+  --surface-2: #18233d;
+  --surface-3: #1f2c4a;
+  --border: #25314f;
+  --text: #eaf1ff;
+  --text-muted: #9db0d0;
+  --primary: #3b82f6;
+  --primary-text: #60a5fa;
+  --primary-soft: #3b82f624;
+  --accent: #22d3ee;
+  --on-primary: #ffffff;
+  --up: #34d399;
+  --up-soft: #34d39922;
+  --down: #f87171;
+  --down-soft: #f8717122;
+  --overlay: #02060fb3;
+  --focus: #60a5fa;
+  --chrome: #0a1020d9; /* translucent top/tab bar backdrop */
+
+  --grad-primary: linear-gradient(135deg, #2563eb 0%, #0891b2 100%);
+  --grad-hero: radial-gradient(120% 80% at 50% 0%, #1e3a8a55 0%, transparent 60%);
+  --grad-gold: linear-gradient(110deg, #f59e0b 0%, #fde68a 45%, #f59e0b 60%, #fbbf24 100%);
+  --grad-card-back: linear-gradient(160deg, #1d3b8f 0%, #0f1f4d 55%, #0b1633 100%);
+
+  /* Value tiers (text/accent + translucent fill) */
+  --tier-common: #a7b4c8;
+  --tier-common-bg: #a7b4c81f;
+  --tier-nice: #4ade80;
+  --tier-nice-bg: #4ade801f;
+  --tier-rare: #60a5fa;
+  --tier-rare-bg: #60a5fa24;
+  --tier-super: #c084fc;
+  --tier-super-bg: #c084fc24;
+  --tier-treasure: #fbbf24;
+  --tier-treasure-bg: #fbbf2426;
+
+  /* Shape & depth */
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+  --glow: 0 0 0 1px #3b82f633, 0 8px 32px -8px #2563eb66;
+  --shadow-raised: 0 10px 28px -8px #2563ebaa, inset 0 1px 0 #ffffff33;
+  --shadow-pop: 0 18px 48px -12px #000000aa;
+  --highlight: inset 0 1px 0 #ffffff33;
+
+  /* Type */
+  --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", "Noto Sans KR", "Noto Sans JP", system-ui, sans-serif;
+  --fs-price-xl: 52px;
+  --fs-title: 28px;
+  --fs-h2: 20px;
+  --fs-body: 17px;
+  --fs-small: 15px;
+  --fs-caption: 13px;
+
+  /* Spacing & layout */
+  --gutter: 20px;
+  --content-max: 560px;
+  --tap: 44px;
+  --topbar-h: 56px;
+  --tabbar-h: 64px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur: 180ms;
+  --dur-slow: 320ms;
+
+  /* Layers */
+  --z-topbar: 20;
+  --z-tabbar: 30;
+  --z-toast: 60;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f7fe;
+  --surface: #ffffff;
+  --surface-2: #eaf0fb;
+  --surface-3: #dde6f6;
+  --border: #d6dfef;
+  --text: #0b1530;
+  --text-muted: #4b5b78;
+  --primary: #2563eb;
+  --primary-text: #1d4ed8;
+  --primary-soft: #2563eb1a;
+  --accent: #0891b2;
+  --up: #047857;
+  --up-soft: #04785718;
+  --down: #b91c1c;
+  --down-soft: #b91c1c14;
+  --overlay: #0b153066;
+  --focus: #1d4ed8;
+  --chrome: #f4f7fee0;
+
+  --grad-hero: radial-gradient(120% 80% at 50% 0%, #93c5fd59 0%, transparent 60%);
+
+  --tier-common: #475569;
+  --tier-common-bg: #4755691a;
+  --tier-nice: #15803d;
+  --tier-nice-bg: #15803d1a;
+  --tier-rare: #1d4ed8;
+  --tier-rare-bg: #1d4ed81a;
+  --tier-super: #7e22ce;
+  --tier-super-bg: #7e22ce1a;
+  --tier-treasure: #b45309;
+  --tier-treasure-bg: #f59e0b26;
+
+  --glow: 0 6px 24px -10px #1d4ed840, 0 0 0 1px #d6dfef;
+  --shadow-raised: 0 10px 24px -8px #2563eb80, inset 0 1px 0 #ffffff40;
+  --shadow-pop: 0 18px 48px -16px #0b153055;
+}

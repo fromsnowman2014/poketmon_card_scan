@@ -1,0 +1,49 @@
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 12px 5px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--tier-bg);
+  background: var(--tier-bg);
+  color: var(--tier);
+  font-size: var(--fs-small);
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.tier-badge-emoji {
+  font-size: 1.05em;
+  line-height: 1;
+}
+
+.tier-badge-sm {
+  min-height: 24px;
+  padding: 3px 9px 3px 7px;
+  gap: 4px;
+  font-size: var(--fs-caption);
+}
+
+.tier-badge-lg {
+  min-height: 42px;
+  padding: 8px 18px 8px 14px;
+  gap: 8px;
+  font-size: var(--fs-body);
+}
+
+/* Treasure: solid gold with a slow shimmer. */
+.tier-badge.tier-treasure {
+  border-color: #fde68a99;
+  background: var(--grad-gold);
+  background-size: 220% 100%;
+  color: #422006;
+  box-shadow: 0 6px 20px -8px #f59e0bcc;
+  animation: tier-gold 3.2s linear infinite;
+}
+
+@keyframes tier-gold {
+  from { background-position: 100% 0; }
+  to { background-position: -120% 0; }
+}

@@ -1,19 +1,53 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0A1224" />
+    <meta name="theme-color" content="#0A1020" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CardCheck" />
+    <meta name="format-detection" content="telephone=no" />
     <meta name="description" content="포켓몬 카드를 찍으면 시세를 알려주는 무료 앱" />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <link rel="preconnect" href="https://api.tcgdex.net" />
     <link rel="preconnect" href="https://assets.tcgdex.net" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      crossorigin
+      href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
     <title>CardCheck</title>
+    <script>
+      // Apply the saved theme/language before first paint (no flash). Mirrors App's useDocumentSettings.
+      (function () {
+        var theme = 'system';
+        var lang = (navigator.language || '').toLowerCase().indexOf('ko') === 0 ? 'ko' : 'en';
+        try {
+          var saved = JSON.parse(localStorage.getItem('cc:settings') || 'null');
+          if (saved && saved.v === 1 && saved.data) {
+            theme = saved.data.theme || theme;
+            lang = saved.data.uiLang || lang;
+          }
+        } catch (e) {}
+        if (theme !== 'dark' && theme !== 'light') {
+          theme = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        var root = document.documentElement;
+        root.setAttribute('data-theme', theme);
+        root.setAttribute('lang', lang);
+        if (theme === 'light') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#F4F7FE');
+      })();
+    </script>
+    <style>
+      /* Before the app CSS loads: match its background so launch never flashes white. */
+      html { background: #0a1020; }
+      html[data-theme='light'] { background: #f4f7fe; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

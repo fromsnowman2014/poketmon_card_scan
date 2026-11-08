@@ -1,0 +1,488 @@
+/* Card result screen. Prefix "card-" (but never .card-image* / .card-back*, which belong to CardImage). */
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 4px;
+}
+
+/* ---------- Hero picture ---------- */
+
+.card-hero {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+/* Soft halo in the tier color behind the card. */
+.card-hero::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, var(--tier, var(--primary)), transparent);
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+.card-art {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 52%;
+  max-width: 260px;
+  padding: 0;
+  border: 0;
+  border-radius: 4.8% / 3.4%;
+  background: none;
+  transition: transform var(--dur) var(--ease);
+}
+
+button.card-art:active {
+  transform: scale(0.98);
+}
+
+.card-zoom-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #0a1020b8;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px #ffffff2e;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.card-zoom {
+  width: min(100%, calc((88vh - 150px) * 63 / 88));
+  width: min(100%, calc((88dvh - 150px) * 63 / 88));
+  margin: 0 auto 8px;
+}
+
+/* ---------- Name + chips ---------- */
+
+.card-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.card-name {
+  font-size: var(--fs-title);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.card-subtitle {
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.card-chips {
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.card-chips .chip {
+  min-height: 30px;
+  padding: 4px 12px;
+  border-color: transparent;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-caption);
+  white-space: normal;
+}
+
+.card-chip-num {
+  color: var(--text-muted);
+}
+
+/* ---------- Variants ---------- */
+
+.card-variant-row {
+  justify-content: center;
+}
+
+.card-variant-none {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---------- Price hero ---------- */
+
+.card-price {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 18px 16px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--glow);
+}
+
+/* The tier cheer sits on the panel's top edge, so the price moves up toward the fold. */
+.card-price-tiered {
+  position: relative;
+  margin-top: 16px;
+  padding-top: 34px;
+  background: radial-gradient(120% 70% at 50% 0%, var(--tier-bg), transparent 70%), var(--surface);
+  border-color: var(--tier-bg);
+  border-color: color-mix(in srgb, var(--tier) 32%, var(--border));
+}
+
+.card-tier {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: var(--radius-pill);
+  background: var(--surface); /* tier badge fills are translucent: hide the border line behind it */
+}
+
+.card-price-label {
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+/* Long KRW amounts ("₩1,338,400") must still fit a 390px phone. */
+.card-price-value {
+  font-size: clamp(40px, 12.5vw, var(--fs-price-xl));
+}
+
+.card-trend {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  font-weight: 800;
+}
+
+.card-trend-up {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.card-trend-down {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.card-range {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  padding-top: 4px;
+}
+
+.card-range-track {
+  position: relative;
+  height: 8px;
+  margin: 0 10px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--surface-3), var(--tier, var(--primary)));
+}
+
+.card-range-dot {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 4px solid var(--primary);
+  border-radius: 50%;
+  background: var(--on-primary);
+  box-shadow: 0 0 0 4px var(--primary-soft), 0 2px 8px #00000059;
+}
+
+.card-price-source {
+  text-wrap: balance;
+}
+
+.card-range-ends {
+  font-size: var(--fs-small);
+  font-weight: 700;
+}
+
+.card-price-empty {
+  gap: 6px;
+  padding: 26px 20px;
+}
+
+.card-mystery {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, var(--surface-3), var(--surface-2) 70%);
+  font-size: 30px;
+  line-height: 1;
+}
+
+/* ---------- My Cards ---------- */
+
+.card-owned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 6px 6px 6px 16px;
+  border: 1px solid var(--up-soft);
+  border-radius: var(--radius-lg);
+  background: var(--up-soft);
+}
+
+.card-owned-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 800;
+}
+
+.card-owned-check {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--up);
+  color: var(--bg);
+}
+
+.card-stepper {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.card-stepper .btn-icon {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+/* ---------- eBay ---------- */
+
+.card-ebay {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+}
+
+.card-ebay-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.card-ebay-big {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.card-ebay-sub {
+  font-weight: 700;
+}
+
+.card-auctions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card-auction {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  margin: 0 -8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur) var(--ease);
+}
+
+.card-auction:active {
+  background: var(--surface-2);
+}
+
+.card-auction-thumb {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  object-fit: cover;
+}
+
+.card-auction-title {
+  display: block;
+  font-weight: 600;
+}
+
+.card-auction-price {
+  flex: none;
+  font-weight: 800;
+}
+
+.card-ebay-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.card-ebay-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 88px;
+  padding: 12px 6px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-small);
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: center;
+  transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.card-ebay-link:active {
+  transform: scale(0.97);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.card-ebay-emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.card-ebay-hint {
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* ---------- More prices ---------- */
+
+.card-more {
+  padding: 0;
+  border-radius: var(--radius-lg);
+}
+
+.card-more-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+  padding: 0 18px;
+  border-radius: var(--radius-lg);
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+
+.card-more-summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-more-chevron {
+  color: var(--text-muted);
+  transition: transform var(--dur) var(--ease);
+}
+
+.card-more[open] .card-more-chevron {
+  transform: rotate(90deg);
+}
+
+.card-more-body {
+  padding: 0 18px 18px;
+}
+
+.card-more-source {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-body);
+  font-weight: 800;
+}
+
+.card-more-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.card-more-cell:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.card-more-cell {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.card-more-cell dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.card-more-note {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* ---------- Misc ---------- */
+
+.card-wrong {
+  margin-right: -6px;
+  padding: 10px 12px;
+}
+
+.card-disclaimer {
+  padding: 0 12px;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.card-skel-pill {
+  border-radius: var(--radius-pill);
+}

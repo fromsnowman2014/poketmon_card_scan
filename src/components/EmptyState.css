@@ -1,0 +1,41 @@
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 12px;
+  text-align: center;
+}
+
+.empty-state-emoji {
+  display: grid;
+  place-items: center;
+  width: 88px;
+  height: 88px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 35%, var(--surface-3), var(--surface) 70%);
+  box-shadow: var(--glow);
+  font-size: 44px;
+  line-height: 1;
+}
+
+.empty-state .h2 {
+  text-wrap: balance;
+}
+
+.empty-state-text {
+  max-width: 300px;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  text-wrap: balance;
+}
+
+.empty-state-action {
+  margin-top: 14px;
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

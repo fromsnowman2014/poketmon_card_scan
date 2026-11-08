@@ -1,0 +1,97 @@
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-tabbar);
+  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
+  background: var(--chrome);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  border-top: 1px solid var(--border);
+}
+
+.tabbar-inner {
+  display: grid;
+  grid-template-columns: 1fr 104px 1fr;
+  max-width: var(--content-max);
+  height: var(--tabbar-h);
+  margin: 0 auto;
+}
+
+.tabbar-tab,
+.tabbar-scan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-bottom: 8px;
+  color: var(--text-muted);
+  transition: color var(--dur) var(--ease);
+}
+
+.tabbar-tab[aria-current="page"] {
+  color: var(--primary-text);
+}
+
+.tabbar-tab[aria-current="page"] .icon {
+  stroke-width: 2.4;
+}
+
+.tabbar-tab:active .icon {
+  transform: scale(0.9);
+}
+
+.tabbar-tab .icon {
+  transition: transform var(--dur) var(--ease);
+}
+
+.tabbar-label {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.tabbar-scan {
+  position: relative;
+  color: var(--text);
+}
+
+.tabbar-scan-btn {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-left: -32px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: 0 0 0 5px var(--bg), 0 12px 30px -6px #2563ebcc, inset 0 1px 0 #ffffff4d;
+  transition: transform var(--dur) var(--ease);
+}
+
+/* Soft breathing halo that invites a tap. */
+.tabbar-scan-btn::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #22d3ee40 0%, #3b82f626 45%, transparent 70%);
+  z-index: -1;
+  animation: tabbar-halo 2.8s var(--ease) infinite;
+}
+
+.tabbar-scan:active .tabbar-scan-btn {
+  transform: scale(0.93);
+}
+
+@keyframes tabbar-halo {
+  0%,
+  100% { opacity: 0.55; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}

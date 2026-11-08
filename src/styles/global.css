@@ -1,0 +1,481 @@
+/* Base styles + the small utility/component class set documented in docs/UI-KIT.md. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  background: var(--bg);
+}
+
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  overflow-x: hidden;
+  /* Korean wraps between words, not inside them ("볼게요" stays whole); a too-long word may still break. */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* Standalone iOS uses a translucent status bar with white text: keep it readable in light mode. */
+:root[data-theme="light"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--safe-top);
+  background: var(--grad-primary);
+  z-index: 100;
+}
+
+img,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+a,
+img {
+  -webkit-touch-callout: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: var(--primary-soft);
+}
+
+/* ---------- Layout ---------- */
+
+.app {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: 70vh;
+  background: var(--grad-hero);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.screen {
+  width: 100%;
+  max-width: var(--content-max);
+  margin-inline: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 32px);
+}
+
+.screen-pad {
+  padding-left: calc(var(--gutter) + var(--safe-left));
+  padding-right: calc(var(--gutter) + var(--safe-right));
+}
+
+.safe-top {
+  padding-top: calc(var(--safe-top) + 12px);
+}
+
+.stack-4,
+.stack-8,
+.stack-12,
+.stack-16,
+.stack-24 {
+  display: flex;
+  flex-direction: column;
+}
+.stack-4 { gap: 4px; }
+.stack-8 { gap: 8px; }
+.stack-12 { gap: 12px; }
+.stack-16 { gap: 16px; }
+.stack-24 { gap: 24px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1 1 auto; min-width: 0; }
+.center { display: flex; flex-direction: column; align-items: center; text-align: center; }
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* Horizontal scroller that bleeds to the screen edges (use inside .screen-pad). */
+.scroll-x {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: var(--gutter);
+  /* Extra vertical room so card glows aren't clipped by the scroll box; margins cancel it out. */
+  margin: -16px calc(-1 * var(--gutter)) -20px;
+  padding: 16px var(--gutter) 28px;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.scroll-x::-webkit-scrollbar { display: none; }
+.scroll-x > * { scroll-snap-align: start; flex: none; }
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: 0;
+}
+
+/* ---------- Type ---------- */
+
+.title {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.h2 {
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.body { font-size: var(--fs-body); font-weight: 600; }
+.small { font-size: var(--fs-small); font-weight: 500; }
+.caption { font-size: var(--fs-caption); font-weight: 500; line-height: 1.35; letter-spacing: 0; }
+.muted { color: var(--text-muted); }
+.text-primary { color: var(--primary-text); }
+.text-up { color: var(--up); }
+.text-down { color: var(--down); }
+.tabular { font-variant-numeric: tabular-nums; }
+
+.price-xl {
+  font-size: var(--fs-price-xl);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.link {
+  color: var(--primary-text);
+  font-weight: 700;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Surfaces ---------- */
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.surface-2 {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.surface-glow { box-shadow: var(--glow); }
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 10px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform var(--dur) var(--ease), background-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+.btn:active { transform: scale(0.97); }
+.btn:disabled,
+.btn[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+.btn svg { flex: none; }
+
+.btn-primary {
+  background: var(--grad-primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-raised);
+  font-weight: 800;
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--primary-text);
+}
+.btn-ghost:active { background: var(--primary-soft); }
+
+.btn-lg {
+  min-height: 56px;
+  padding: 14px 24px;
+  font-size: var(--fs-body);
+  border-radius: var(--radius-lg);
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 6px 14px;
+  font-size: var(--fs-caption);
+}
+
+.btn-block { display: flex; width: 100%; }
+
+.btn-icon {
+  width: var(--tap);
+  height: var(--tap);
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* ---------- Chips ---------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+/* Chips used as buttons keep a 44px hit area while looking compact. */
+button.chip { position: relative; }
+button.chip::after { content: ""; position: absolute; inset: -4px 0; }
+
+.chip[aria-pressed="true"],
+.chip[aria-selected="true"],
+.chip-active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary-text);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Inputs ---------- */
+
+.input {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 17px; /* ≥16px stops iOS from zooming on focus */
+  font-weight: 600;
+  outline: none;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.input::placeholder { color: var(--text-muted); opacity: 0.8; font-weight: 500; }
+.input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-soft); }
+
+/* ---------- Value tiers ---------- */
+/* .tier-<id> sets --tier (text/accent), --tier-bg (fill) and --tier-fill (solid swatch, gold gradient for treasure). */
+
+.tier-common { --tier: var(--tier-common); --tier-bg: var(--tier-common-bg); --tier-fill: var(--tier-common); }
+.tier-nice { --tier: var(--tier-nice); --tier-bg: var(--tier-nice-bg); --tier-fill: var(--tier-nice); }
+.tier-rare { --tier: var(--tier-rare); --tier-bg: var(--tier-rare-bg); --tier-fill: var(--tier-rare); }
+.tier-super { --tier: var(--tier-super); --tier-bg: var(--tier-super-bg); --tier-fill: var(--tier-super); }
+.tier-treasure { --tier: var(--tier-treasure); --tier-bg: var(--tier-treasure-bg); --tier-fill: var(--grad-gold); }
+
+.tier-text { color: var(--tier); }
+
+.tier-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tier-fill);
+  flex: none;
+}
+
+/* ---------- Loading ---------- */
+
+.skeleton {
+  display: block;
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--surface-3) 50%, var(--surface-2) 70%);
+  background-size: 300% 100%;
+  border-radius: var(--radius-sm);
+  animation: cc-shimmer 1.4s linear infinite;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--surface-3);
+  border-top-color: var(--primary-text);
+  animation: cc-spin 0.8s linear infinite;
+}
+
+/* ---------- Motion ---------- */
+
+.fade-in { animation: cc-fade-in var(--dur-slow) var(--ease) both; }
+.pop-in { animation: cc-pop-in var(--dur-slow) var(--ease) both; }
+.slide-up { animation: cc-slide-up var(--dur-slow) var(--ease) both; }
+
+@keyframes cc-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cc-pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes cc-slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cc-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -50% 0; }
+}
+
+@keyframes cc-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton { animation: none; }
+  /* A slow spin is a status signal, not decorative motion. */
+  .spinner { animation-duration: 1.2s !important; animation-iteration-count: infinite !important; }
+}
