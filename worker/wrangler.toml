@@ -1,0 +1,11 @@
+name = "cardcheck-ebay"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# "*" works everywhere. To allow only your app: "https://<github-user>.github.io" (comma-separate several).
+ALLOWED_ORIGIN = "*"
+MARKETPLACE = "EBAY_US"
+# Secrets are NOT stored here. Set them with:
+#   npx wrangler secret put EBAY_CLIENT_ID
+#   npx wrangler secret put EBAY_CLIENT_SECRET

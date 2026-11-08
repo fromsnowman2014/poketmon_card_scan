@@ -1,0 +1,10 @@
+{
+  "name": "cardcheck-ebay",
+  "private": true,
+  "type": "module",
+  "description": "Optional eBay price proxy for CardCheck (Cloudflare Worker)",
+  "scripts": {
+    "test": "node test.mjs",
+    "deploy": "npx wrangler@4 deploy"
+  }
+}
