@@ -12,6 +12,7 @@ an **optional** Cloudflare Worker (`/worker`) unlocks live eBay listing prices.
 | Prices | TCGdex `pricing` → **TCGplayer** (USD, EN cards) and **Cardmarket** (EUR, also JA cards) | Converted to USD for display |
 | Currency rates | `https://open.er-api.com/v6/latest/USD` | CORS `*`, cached 12h, hard-coded fallback |
 | Pokémon names KO/JA/EN | `src/data/pokemon-names.json` generated from PokeAPI CSV (`npm run names`) | `[dexId, en, ko, ja][]` |
+| EN set abbreviations | `src/data/en-sets.json` generated from TCGdex (`npm run en-sets`) | `[{id, abbr, official, total, name, releaseDate}]` — printed "PAR EN 123/182" → `sv04` |
 | OCR | `tesseract.js` (runs on-device, eng data from CDN, cached by the service worker) | |
 | eBay | Deep links (always) + optional Worker using eBay Browse API (active auctions / Buy It Now) | |
 
@@ -41,16 +42,21 @@ scripts/build-names.mjs          names data generator
 .github/workflows/deploy.yml     GitHub Pages deploy                   (ebay/infra)
 ```
 
-## Routes (hash based — works on GitHub Pages)
+## Routes (in-memory router — the URL never changes while navigating)
 
-| Hash | Screen |
+iOS re-prompts for camera permission in installed PWAs whenever the URL/hash changes (WebKit bug 215884), so
+navigation uses `history.pushState(state, '')` **without changing the URL**; the current path lives in
+`history.state.path` (+ `sessionStorage` to survive reloads). A `#/…` hash present on first load is honored once
+(deep link) and then removed with `replaceState`. Paths below are router paths, not URLs.
+
+| Path | Screen |
 |---|---|
-| `#/` | Home: big "Scan a card" button, search box, collection value, recently viewed |
-| `#/scan` | Camera viewfinder → OCR → "Is this your card?" candidates |
-| `#/search?q=<text>&lang=<en|ja|ko>` | Name / number search results grid |
-| `#/card/<lang>/<id>` | Result screen: price hero, low/high, trend, variant picker, eBay, add to My Cards |
-| `#/collection` | My Cards: total value, list, refresh prices |
-| `#/settings` | UI language, currency, default search language, optional eBay worker URL, data credits |
+| `/` | Home: big "Scan a card" button, search box, collection value, recently viewed |
+| `/scan` | Camera viewfinder → OCR → "Is this your card?" candidates |
+| `/search?q=<text>&lang=<en|ja|ko>` | Name / number search results grid |
+| `/card/<lang>/<id>` | Result screen: price hero, low/high, trend, variant picker, eBay, add to My Cards |
+| `/collection` | My Cards: total value, list, refresh prices |
+| `/settings` | UI language, currency, default search language, optional eBay worker URL, data credits |
 
 ## Module APIs
 
@@ -77,6 +83,15 @@ export function findSpecies(query: string, limit?: number): Species[]; // matche
 export function localizedName(dexIds: number[] | undefined, lang: 'en' | 'ko' | 'ja'): string | undefined;
 ```
 
+### Language notes
+* **JA**: printed set code == TCGdex set id (case-insensitive): `sv8a 084/187` → `/v2/ja/cards/SV8a-084`. Promos `085/SV-P` → `SV-P-085`.
+* **KO**: TCGdex KO data is nearly empty (≈240 cards). Korean cards print the same set codes as JA, so look them up
+  on the **ja** endpoint and show the Korean Pokémon name from `names.ts` (dexId). `CardDetail.lang` stays `'ja'`
+  for data purposes; the UI shows the Korean name when UI language is Korean.
+* **EN**: printed abbreviation → set id via `src/data/en-sets.json`; SV/ME-era numbers are 3-digit padded
+  (`sv08.5-084`), older sets unpadded (`sm6-84`) — try padded then unpadded.
+* Exclude TCG Pocket digital sets everywhere: ids matching `/^(A\d+[ab]?|B\d+a?|P-A)-/`.
+
 ### lib/tcgdex.ts
 ```ts
 export interface SetInfo { id: string; name: string; official: number; total: number; logo?: string; symbol?: string; releaseDate?: string; abbreviation?: string }
@@ -95,7 +110,7 @@ export function splitCardId(id: string): { setId: string; localId: string };
 ```ts
 export function buildVariants(raw: unknown, rates: Rates): { variants: CardVariant[]; defaultVariant: string };
 export function summarize(tcg: TcgplayerPrice | null | undefined, cm: CardmarketPrice | null | undefined, rates: Rates, updated?: string): PriceSummary | null;
-export function valueTier(usd: number | null | undefined): ValueTier;  // common <$1, nice <$5, rare <$20, super <$100, treasure ≥$100
+export function valueTier(usd: number | null | undefined): ValueTier;  // common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100
 export function formatMoney(usd: number | null | undefined, currency: DisplayCurrency, rates?: Rates, opts?: { approx?: boolean }): string; // "$12.34", "₩16,500", "—"
 ```
 
@@ -119,9 +134,9 @@ export function fetchEbaySummary(workerUrl: string, query: string, signal?: Abor
 ```ts
 export interface Route { path: string; segments: string[]; query: URLSearchParams }
 export function useRoute(): Route;
-export function navigate(to: string, opts?: { replace?: boolean }): void;   // to = "/card/ja/SV8a-084"
-export function goBack(fallback?: string): void;
-export function href(to: string): string;                                   // "#/card/ja/SV8a-084"
+export function navigate(to: string, opts?: { replace?: boolean }): void;   // to = "/card/ja/SV8a-084" (may include ?query)
+export function goBack(fallback?: string): void;                            // history.back() if we have in-app history, else navigate(fallback ?? '/')
+export function Link(props: { to: string; className?: string; children: ReactNode; ... }): JSX.Element; // <a> that calls navigate (no href change)
 ```
 
 ### lib/i18n.ts
@@ -142,7 +157,15 @@ export function removeFromCollection(key: string): void;
 export function setQuantity(key: string, qty: number): void;
 export function updateCollectionPrice(key: string, priceUsd: number | null): void;
 export function useHistory(): HistoryItem[];                                   // newest first, max 20
-export function pushHistory(card: CardDetail): void;
+export function pushHistory(card: CardDetail, priceUsd: number | null): void;
+export function clearHistory(): void;
+export function useSnapshots(): ValueSnapshot[];                               // one per local day, max 120
+export function recordSnapshot(totalUsd: number): void;                         // upsert today's snapshot
+export function collectionTotalUsd(items: CollectionItem[]): number;
+export function resetAllData(): void;
+// Settings default: { uiLang: navigator.language startsWith 'ko' ? 'ko' : 'en', currency: 'USD',
+//   searchLang: uiLang === 'ko' ? 'ja' : 'en', ebayWorkerUrl: '', theme: 'system' }
+// The search screen offers EN / 日本語 chips; Korean cards are found through 日本語 (same set codes).
 ```
 
 ## Price logic (summary)

@@ -94,6 +94,11 @@ export interface CardDetail extends CardBrief {
   /** National Pokédex numbers (empty for trainers/energy). */
   dexIds: number[];
   illustrator?: string;
+  /**
+   * Fallback image when TCGdex has none (many JA cards): TCGplayer CDN
+   * `https://tcgplayer-cdn.tcgplayer.com/product/{tcgplayerId}_400w.jpg`. Full URL, use as-is.
+   */
+  imageFallback?: string;
   /** Printings with prices. Never empty: at least one entry (possibly with summary=null). */
   variants: CardVariant[];
   /** Key of the variant to show first (the one with the best price data / most common). */
@@ -136,6 +141,9 @@ export interface EbayListing {
   endsAt?: string;
   url: string;
   image?: string;
+  shipping?: number | null;
+  condition?: string | null;
+  graded?: boolean;
 }
 
 export interface EbaySummary {
@@ -144,6 +152,7 @@ export interface EbaySummary {
   auctions: { count: number; items: EbayListing[] };
   buyNow: { count: number; lowest: number | null; median: number | null; items: EbayListing[] };
   searchUrl: string;
+  soldUrl?: string;
 }
 
 /** A card saved in "My Cards". */
@@ -181,6 +190,14 @@ export interface Settings {
   searchLang: CardLang;
   /** Optional URL of the eBay proxy worker (see /worker). Empty = deep links only. */
   ebayWorkerUrl: string;
+  theme: 'system' | 'dark' | 'light';
+}
+
+/** Daily snapshot of the collection total, used for "since last week" change. */
+export interface ValueSnapshot {
+  /** YYYY-MM-DD (local date) */
+  date: string;
+  totalUsd: number;
 }
 
 /** Fun price tiers for kids. */
