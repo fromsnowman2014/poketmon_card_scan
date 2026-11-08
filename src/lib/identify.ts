@@ -1,0 +1,86 @@
+// Photo of a card → candidate cards: OCR the printed collector line, then look the code up on TCGdex.
+import enSets from '../data/en-sets.json';
+import { preloadOcr, readCodeStrip } from './ocr';
+import type { ParsedCode } from './parseCode';
+import { findByCode, getSets, resolveSets } from './tcgdex';
+import type { CardBrief, CardLang, IdentifyResult, PrintedCode, ProgressFn } from './types';
+
+export interface IdentifyOptions {
+  /**
+   * The language the user says the card is in. Breaks ties when OCR found no set code, and 'ko' labels JA-style
+   * codes as Korean (Korean cards print the same codes, and OCR cannot tell them apart).
+   */
+  langHint?: CardLang;
+}
+
+// Subset keys like "SHF:SV" never appear in OCR text; 2-letter abbreviations match too much noise.
+const EN_ABBRS = (enSets as { abbr: string | null }[]).flatMap((s) => (s.abbr && /^[A-Z0-9]{3,}$/.test(s.abbr) ? [s.abbr] : []));
+
+/** Read the collector line of a cropped card (63:88) and find matching cards, best first. Never throws. */
+export async function identifyCard(card: HTMLCanvasElement, onProgress?: ProgressFn, opts: IdentifyOptions = {}): Promise<IdentifyResult> {
+  const hint = opts.langHint;
+  onProgress?.('loading', 0);
+  const [knownSetIds] = await Promise.all([jaSetIds(), preloadOcr()]);
+  const { passes, merged } = await readCodeStrip(card, {
+    onProgress,
+    parse: { knownSetIds, knownEnAbbrs: EN_ABBRS },
+    shouldStop: (sofar, parsed) => isConfident(sofar, parsed, hint),
+  });
+  const rawText = passes.map((p) => p.text.trim()).filter(Boolean).join('\n');
+  const code = toPrintedCode(merged, hint);
+  if (!code.number) return { rawText, code, candidates: [] };
+  return { rawText, code, candidates: await lookup(code, hint, onProgress) };
+}
+
+async function jaSetIds(): Promise<string[]> {
+  try {
+    return (await getSets('ja')).map((s) => s.id);
+  } catch {
+    return [];
+  }
+}
+
+// KO cards print JA set codes and TCGdex's KO data is nearly empty, so Korean cards are looked up as Japanese.
+const dataLang = (lang: CardLang): CardLang => (lang === 'ko' ? 'ja' : lang);
+const otherLang = (lang: CardLang): CardLang => (lang === 'en' ? 'ja' : 'en');
+
+/** Lookup languages in groups; a later group is tried only when the earlier ones found nothing. */
+function lookupPlan(code: PrintedCode, hint?: CardLang): CardLang[][] {
+  if (code.lang) {
+    const lang = dataLang(code.lang);
+    return [[lang], [otherLang(lang)]];
+  }
+  const first = dataLang(hint ?? 'ja');
+  return [[first, otherLang(first)]];
+}
+
+const forLookup = (code: PrintedCode): PrintedCode => (code.lang ? { ...code, lang: dataLang(code.lang) } : code);
+
+/** Early exit: two passes agree on the number and the code points at exactly one set. */
+async function isConfident(merged: ParsedCode, parsed: ParsedCode[], hint?: CardLang): Promise<boolean> {
+  if (!merged.number) return false;
+  const agreeing = parsed.filter((p) => p.number === merged.number && p.total === merged.total).length;
+  if (agreeing < 2) return false;
+  try {
+    const code = toPrintedCode(merged, hint);
+    return (await resolveSets(forLookup(code), lookupPlan(code, hint)[0])).length === 1;
+  } catch {
+    return false;
+  }
+}
+
+function toPrintedCode({ setCode, number, total, lang, promo }: ParsedCode, hint?: CardLang): PrintedCode {
+  return { setCode, number, total, lang: lang === 'ja' && hint === 'ko' ? 'ko' : lang, promo };
+}
+
+async function lookup(code: PrintedCode, hint: CardLang | undefined, onProgress?: ProgressFn): Promise<CardBrief[]> {
+  const plan = lookupPlan(code, hint);
+  let found: CardBrief[] = [];
+  for (const [i, langs] of plan.entries()) {
+    onProgress?.('matching', i / plan.length);
+    found = await findByCode(forLookup(code), langs).catch(() => []);
+    if (found.length) break;
+  }
+  onProgress?.('matching', 1);
+  return found;
+}

@@ -175,12 +175,17 @@ export interface CollectionItem {
   priceUpdatedAt: string;
   addedAt: string;
   dexIds?: number[];
+  /** CardDetail.imageFallback, kept because most JA cards have no TCGdex image. */
+  imageFallback?: string;
 }
 
 /** A recently viewed card (home screen history). */
 export interface HistoryItem extends CardBrief {
   priceUsd: number | null;
   viewedAt: string;
+  /** For showing the name in the UI language (names.translateCardName). */
+  dexIds?: number[];
+  imageFallback?: string;
 }
 
 export interface Settings {
