@@ -31,6 +31,7 @@ export function BestCard({ item, photo }: { item: CollectionItem; photo?: string
         alt={item.name}
         size="thumb"
         tier={tier}
+        code={{ set: item.setId, number: item.localId }}
         className="collection-best-art"
       />
       <span className="grow stack-4">
@@ -40,7 +41,7 @@ export function BestCard({ item, photo }: { item: CollectionItem; photo?: string
         </span>
         <span className="collection-best-name">{item.name}</span>
         <span className="small muted truncate">{sub ?? `${item.setName} · #${item.localId}`}</span>
-        <Money usd={item.priceUsd} className="collection-best-price" />
+        <Money usd={item.priceUsd} approx={item.priceApprox} className="collection-best-price" />
         <TierBadge tier={tier} size="sm" />
       </span>
       <Icon name="chevron-right" className="collection-chevron" />

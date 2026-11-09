@@ -1,8 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearCache, HttpError } from './cache';
+import { ebayQuery } from './ebay';
+import { getRates, getRatesSync } from './fx';
 import { formatMoney } from './pricing';
-import { cardImage, findByCode, getCard, getSets, listCards, resolveSets, searchCards, splitCardId } from './tcgdex';
-import { calledUrls, mockFetch } from './__fixtures__/mockFetch';
+import {
+  cardImage,
+  findByCode,
+  getCard,
+  getSets,
+  listCards,
+  parseQueryCode,
+  printedNumber,
+  resolveSets,
+  searchCards,
+  splitCardId,
+} from './tcgdex';
+import { calledUrls, mockFetch, tcgdexHandler } from './__fixtures__/mockFetch';
 
 const LIVE = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.LIVE === '1';
 const POCKET = /^(A\d+[ab]?|B\d+a?|P-A)-/;
@@ -44,6 +57,7 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
 
   describe('getCard', () => {
     it('builds a CardDetail for ja SV8a-084', async () => {
+      await getRates(); // mocked 0.9 EUR per USD
       const card = await getCard('ja', 'SV8a-084');
       expect(card).toMatchObject({
         id: 'SV8a-084',
@@ -54,6 +68,7 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
         setId: 'SV8a',
         setName: 'テラスタルフェスex',
         setOfficialCount: 187,
+        printedNumber: '084/187',
         setReleaseDate: '2024-12-06',
         hp: 70,
         types: ['Fighting'],
@@ -81,8 +96,56 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
 
     it('keeps EN rarity and the TCGplayer headline', async () => {
       const card = await getCard('en', 'sv03.5-199');
-      expect(card).toMatchObject({ rarity: 'Special illustration rare', setName: '151', setOfficialCount: 165, defaultVariant: 'holo' });
-      expect(card.variants[0].summary).toMatchObject({ market: 295.26, high: 326.3, source: 'tcgplayer' });
+      expect(card).toMatchObject({
+        rarity: 'Special illustration rare',
+        setName: '151',
+        setOfficialCount: 165,
+        printedNumber: '199/165',
+        defaultVariant: 'holo',
+      });
+      // High: Cardmarket avg 336.32 EUR beats TCGplayer's mid (the 10000 high is a placeholder).
+      const high = Math.round((336.32 / getRatesSync().EUR) * 100) / 100;
+      expect(card.variants[0].summary).toMatchObject({ market: 295.26, high, source: 'tcgplayer' });
+    });
+
+    it.each([
+      // EN promo sets report the number of promos as "official", but the cards print no total.
+      ['en', 'svp-085', undefined, '085', 'Pikachu with Grey Felt Hat 085 promo'],
+      ['en', 'swshp-SWSH284', undefined, 'SWSH284', 'Galarian Moltres SWSH284'],
+      // Subset sets: lettered totals and the parent set's name.
+      ['en', 'swsh9tg-TG05', 30, 'TG05/TG30', 'Zekrom TG05/TG30 Brilliant Stars'],
+      ['en', 'swsh12.5gg-GG35', 70, 'GG35/GG70', 'Leafeon VSTAR GG35/GG70 Crown Zenith'],
+      ['ja', 'SV-P-085', undefined, '085/SV-P', '085/SV-P Japanese'],
+      ['ja', 'SV8a-084', 187, '084/187', 'Hawlucha sv8a 084/187 Japanese'],
+    ] as const)('%s %s: printed number and eBay keywords', async (lang, id, official, printed, query) => {
+      const card = await getCard(lang, id);
+      expect(card.setOfficialCount).toBe(official);
+      expect(card.printedNumber).toBe(printed);
+      expect(ebayQuery(card)).toBe(query);
+    });
+
+    it('does not wait for exchange rates (last known / fallback rates, live ones load in the background)', async () => {
+      vi.useFakeTimers();
+      const fx = /er-api|frankfurter|currency-api/;
+      const hang = (signal?: AbortSignal | null) =>
+        new Promise<Response>((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+      const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (fx.test(url.host + url.pathname)) return hang(init?.signal);
+        const out = tcgdexHandler(url, typeof init?.body === 'string' ? init.body : undefined);
+        return out === undefined ? new Response('{}', { status: 404 }) : new Response(JSON.stringify(out), { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchFn);
+      const rates = getRatesSync();
+      const card = await getCard('ja', 'SV8a-084');
+      expect(card.variants.find((v) => v.key === 'reverse')?.summary?.market).toBe(Math.round((1.51 / rates.EUR) * 100) / 100);
+      expect(calledUrls(fetchFn).some((u) => u.includes('er-api'))).toBe(true);
+      // Each provider gets at most 3.5 s, then the next one is tried.
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(calledUrls(fetchFn).some((u) => u.includes('frankfurter'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(getRatesSync()).toEqual(rates);
+      vi.useRealTimers();
     });
   });
 
@@ -156,6 +219,13 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
   });
 
   describe('searchCards', () => {
+    it('finds EN codes typed in any case or as one token', async () => {
+      expect((await searchCards('svp 085', 'ko')).map((c) => c.id)).toEqual(['svp-085']);
+      expect((await searchCards('Svp EN 085', 'en')).map((c) => c.id)).toEqual(['svp-085']);
+      expect((await searchCards('swsh284', 'en')).map((c) => c.id)).toEqual(['swshp-SWSH284']);
+      expect((await searchCards('SWSH 284', 'en')).map((c) => c.id)).toEqual(['swshp-SWSH284']);
+    });
+
     it('a Korean name is translated to the JA name= query', async () => {
       const r = await searchCards('루차불', 'ko');
       expect(calledUrls(fetchMock)).toContain('https://api.tcgdex.net/v2/ja/cards?name=ルチャブル');
@@ -197,6 +267,44 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
     expect(r.find((c) => c.id === 'SV-P-034')).toMatchObject({ setId: 'SV-P', localId: '034', lang: 'ja' });
   });
 
+});
+
+describe('parseQueryCode', () => {
+  it.each([
+    ['PAR 123', { setCode: 'PAR', number: '123' }],
+    ['par 123', { setCode: 'PAR', number: '123' }],
+    ['Par 123/182', { setCode: 'PAR', number: '123', total: '182' }],
+    ['obf 125', { setCode: 'OBF', number: '125' }],
+    ['svp en 085', { setCode: 'SVP', number: '085' }],
+    ['Svp 085', { setCode: 'SVP', number: '085', lang: 'en' }],
+    ['swsh 284', { setCode: 'SWSH', number: '284', lang: 'en' }],
+    ['SWSH284', { setCode: 'SWSH', number: '284', lang: 'en' }],
+    ['swsh284', { setCode: 'SWSH', number: '284', lang: 'en' }],
+    ['sm60', { setCode: 'SM', number: '60', lang: 'en' }],
+    ['tg05/tg30', { number: 'TG05', total: 'TG30' }],
+    ['sv8a 084', { setCode: 'sv8a', number: '084' }],
+    ['084/187', { number: '084', total: '187' }],
+    ['085/SV-P', { setCode: 'SV-P', number: '085', promo: true, lang: 'ja' }],
+  ])('%s', (q, code) => expect(parseQueryCode(q)).toEqual(code));
+
+  it('keeps lowercase words that are not a known code (or with a one-digit number) as names', () => {
+    expect(parseQueryCode('mew 2')).toBeUndefined(); // MEW is 151's code, but "mew 2" is a name
+    expect(parseQueryCode('pikachu 25')).toBeUndefined();
+    expect(parseQueryCode('MEW 2')).toEqual({ setCode: 'MEW', number: '2' });
+  });
+});
+
+describe('printedNumber', () => {
+  const card = (localId: string, setId: string, setName: string, lang: 'en' | 'ja' = 'en') => ({ localId, setId, setName, lang });
+  it('writes the number the way the card prints it', () => {
+    expect(printedNumber(card('084', 'sv08.5', 'Prismatic Evolutions'), 131)).toBe('084/131');
+    expect(printedNumber(card('4', 'base1', 'Base Set'), 102)).toBe('4/102');
+    expect(printedNumber(card('SV49', 'sma', 'Hidden Fates Shiny Vault'), 94)).toBe('SV49/SV94');
+    expect(printedNumber(card('RC1', 'g1', 'Generations'), 83)).toBe('RC1'); // RC1/RC32: total unknown
+    expect(printedNumber(card('XY01', 'xyp', 'XY Black Star Promos'), 211)).toBe('XY01');
+    expect(printedNumber(card('001', 'mep', 'MEP Black Star Promos'), 0)).toBe('001');
+    expect(printedNumber(card('001', 'M-P', 'メガ プロモカード', 'ja'), 0)).toBe('001/M-P');
+  });
 });
 
 describe('cardImage / splitCardId', () => {

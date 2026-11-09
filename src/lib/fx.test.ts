@@ -32,6 +32,30 @@ describe('getRates', () => {
     ]);
   });
 
+  it('falls back to the jsDelivr currency-api when both rate APIs fail', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('currency-api') ? json({ date: '2026-11-08', usd: { eur: 0.8969, krw: 1364.3 } }) : json({}, 503),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await fx.getRates()).toMatchObject({ EUR: 0.8969, KRW: 1364.3 });
+    // One attempt per provider (no retries): nothing waits on rates, a slow host just moves on.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives a hanging provider 3.5 s, then tries the next', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      url.includes('er-api')
+        ? new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
+        : Promise.resolve(json({ base: 'USD', rates: { EUR: 0.88, KRW: 1370 } })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = fx.getRates();
+    await vi.advanceTimersByTimeAsync(3500);
+    expect(await pending).toMatchObject({ EUR: 0.88, KRW: 1370 });
+    vi.useRealTimers();
+  });
+
   it('never throws: uses the hard-coded fallback when offline', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({}, 400)));
     expect(await fx.getRates()).toBe(fx.FALLBACK_RATES);

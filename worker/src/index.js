@@ -2,20 +2,29 @@
 //   GET /                       → health check: { name, ok, configured }
 //   GET /ebay?q=<keywords>[&graded=1] → EbaySummary (see src/lib/types.ts in the app)
 // The browser cannot call the eBay Browse API itself (no CORS, and the client secret must stay private).
+// Abuse limits: q is at most MAX_Q chars, and each IP gets RATE_LIMIT_PER_MIN /ebay requests per minute.
 const TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token";
 const SEARCH_URL = "https://api.ebay.com/buy/browse/v1/item_summary/search";
 const SCOPE = "https://api.ebay.com/oauth/api_scope";
 const CATEGORY = "183454"; // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
 const CACHE_TTL = 600; // seconds
 const MAX_ITEMS = 5;
+const MAX_Q = 120; // characters; the app's queries are ~20-60
+const AUCTION_LIMIT = 20;
+// Buy It Now sample size: enough for a meaningful median once junk is filtered out.
+const BIN_LIMIT = 50;
+const RATE_LIMIT_PER_MIN = 30; // default; override with the RATE_LIMIT_PER_MIN var in wrangler.toml
+const RATE_WINDOW_MS = 60_000;
 
 let tokenCache = { value: null, exp: 0 }; // per isolate
 const memCache = new Map(); // caches.default is a no-op on *.workers.dev, so keep a per-isolate copy too
+const rateHits = new Map(); // ip → { start, n }, per isolate (best effort: Cloudflare may run several isolates)
 
+// Listings that are not "one copy of this card": lots, proxies/fakes, accessories, mystery packs, "read description" traps.
 const JUNK =
-  /\b(proxy|custom|replica|fan ?art|digital|code card|online code|ptcgl|ptcgo|lot|bulk|bundle|choose|pick your|you pick|select your|set of|empty|sleeve|binder|case only|playmat|metal card|orica)\b/i;
+  /\b(proxy|custom|replica|fan ?art|fake|not real|unofficial|digital|code card|online code|ptcgl|ptcgo|lot|lots|bulk|bundle|bundles|playset|choose|pick your|you pick|select your|set of|complete set|mystery|random|repack|empty|sleeve|binder|case only|playmat|metal card|orica|read desc(ription)?|see desc(ription)?|please read)\b/i;
 // Not "ace"/"tag": ACE SPEC and TAG TEAM are real card types.
-const GRADED = /\b(psa|bgs|cgc|sgc|beckett|graded|gem mint 10)\b/i;
+const GRADED = /\b(psa|bgs|cgc|sgc|beckett|graded|gem mint 10|slab|slabbed)\b/i;
 
 /** ALLOWED_ORIGIN: "*" or a comma-separated list, e.g. "https://kid.github.io,http://localhost:5173". */
 function cors(request, env) {
@@ -55,13 +64,14 @@ async function getToken(env) {
   return tokenCache.value;
 }
 
-async function search(env, token, q, buyingOption, sort, retried = false) {
+/** `sort` "" = eBay Best Match (relevance, not price), used as an unbiased sample for the median. */
+async function search(env, token, q, buyingOption, sort, limit, retried = false) {
   const u = new URL(SEARCH_URL);
   u.searchParams.set("q", q);
   u.searchParams.set("category_ids", CATEGORY);
   u.searchParams.set("filter", `buyingOptions:{${buyingOption}}`);
-  u.searchParams.set("sort", sort);
-  u.searchParams.set("limit", "20");
+  if (sort) u.searchParams.set("sort", sort);
+  u.searchParams.set("limit", String(limit));
   const res = await fetch(u, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -74,7 +84,7 @@ async function search(env, token, q, buyingOption, sort, retried = false) {
   if (res.status === 401 && !retried) {
     // Token revoked or expired early: fetch a fresh one once.
     tokenCache = { value: null, exp: 0 };
-    return search(env, await getToken(env), q, buyingOption, sort, true);
+    return search(env, await getToken(env), q, buyingOption, sort, limit, true);
   }
   if (!res.ok) throw new Error(`browse ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json(); // { total, itemSummaries: [...] }
@@ -107,6 +117,9 @@ function listings(items, isAuction, includeGraded) {
     .filter((it) => it.price != null);
 }
 
+/** Price + shipping (shipping counts as 0 when eBay doesn't say, e.g. calculated shipping). */
+const total = (it) => +(it.price + (it.shipping ?? 0)).toFixed(2);
+
 function median(nums) {
   if (!nums.length) return null;
   const s = [...nums].sort((a, b) => a - b);
@@ -120,26 +133,62 @@ const searchUrl = (q, extra = "") =>
 async function summarize(env, q, includeGraded) {
   const token = await getToken(env);
   const [auc, bin] = await Promise.all([
-    search(env, token, q, "AUCTION", "endingSoonest"),
-    search(env, token, q, "FIXED_PRICE", "price"),
+    search(env, token, q, "AUCTION", "endingSoonest", AUCTION_LIMIT),
+    // eBay's "price" sort is price + shipping to the delivery location set in search().
+    search(env, token, q, "FIXED_PRICE", "price", BIN_LIMIT),
   ]);
   const aucItems = listings(auc.itemSummaries, true, includeGraded);
-  const binItems = listings(bin.itemSummaries, false, includeGraded);
-  const binPrices = binItems.map((i) => i.price);
+  const cheapest = listings(bin.itemSummaries, false, includeGraded);
+  // When there are more listings than one page, the cheapest 50 say little about a typical price:
+  // take the median from a Best Match sample instead (one extra eBay call, only for popular cards).
+  const morePages = (bin.total ?? 0) > (bin.itemSummaries || []).length;
+  const sample = morePages
+    ? listings((await search(env, token, q, "FIXED_PRICE", "", BIN_LIMIT)).itemSummaries, false, includeGraded)
+    : cheapest;
+  const medianOf = sample.length >= 3 || !morePages ? sample : cheapest;
+  // Cheapest first by total cost; de-duplicated because a listing can be in both samples.
+  const seen = new Set();
+  const binItems = [...cheapest, ...(morePages ? sample : [])]
+    .filter((it) => !seen.has(it.url) && seen.add(it.url))
+    .sort((a, b) => total(a) - total(b));
+  const best = binItems[0];
   return {
     query: q,
     fetchedAt: new Date().toISOString(),
     // count is eBay's total before junk filtering: "about this many listings".
     auctions: { count: auc.total ?? aucItems.length, items: aucItems.slice(0, MAX_ITEMS) },
     buyNow: {
-      count: bin.total ?? binItems.length,
-      lowest: binPrices.length ? Math.min(...binPrices) : null,
-      median: median(binPrices),
+      count: bin.total ?? cheapest.length,
+      // TOTAL costs (price + shipping), what a buyer actually pays in the US.
+      lowest: best ? total(best) : null,
+      median: median(medianOf.map(total)),
+      lowestShipping: best ? best.shipping ?? null : null,
       items: binItems.slice(0, MAX_ITEMS),
     },
     searchUrl: searchUrl(q),
     soldUrl: searchUrl(q, "&LH_Sold=1&LH_Complete=1&_sop=13"),
   };
+}
+
+/** Fixed one-minute window per IP. Returns seconds to wait, or 0 when the request may go ahead. */
+function rateLimit(ip, limit, now = Date.now()) {
+  let h = rateHits.get(ip);
+  if (!h || now - h.start >= RATE_WINDOW_MS) {
+    h = { start: now, n: 0 };
+    rateHits.set(ip, h);
+    if (rateHits.size > 2000) {
+      for (const [k, v] of rateHits) if (now - v.start >= RATE_WINDOW_MS) rateHits.delete(k);
+    }
+  }
+  h.n++;
+  return h.n > limit ? Math.max(1, Math.ceil((h.start + RATE_WINDOW_MS - now) / 1000)) : 0;
+}
+
+/** Only browsers send Origin, so this keeps other websites out; scripts (curl) are held back by the rate limit. */
+function originAllowed(request, env) {
+  const allowed = (env.ALLOWED_ORIGIN || "*").split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = request.headers.get("Origin");
+  return allowed.includes("*") || !origin || allowed.includes(origin);
 }
 
 export default {
@@ -152,12 +201,23 @@ export default {
     }
     if (request.method !== "GET" || url.pathname !== "/ebay") return json(request, env, { error: "not_found" }, 404);
 
-    const q = (url.searchParams.get("q") || "").trim().replace(/\s+/g, " ").slice(0, 100);
+    const q = (url.searchParams.get("q") || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().replace(/\s+/g, " ");
     if (q.length < 2) return json(request, env, { error: "missing_q" }, 400);
+    if (q.length > MAX_Q) return json(request, env, { error: "q_too_long", detail: `q must be at most ${MAX_Q} characters.` }, 400);
+    if (!originAllowed(request, env)) return json(request, env, { error: "origin_not_allowed", searchUrl: searchUrl(q) }, 403);
     if (!configured) {
       return json(request, env, { error: "not_configured", detail: "Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET with `wrangler secret put`.", searchUrl: searchUrl(q) }, 500);
     }
-    const includeGraded = url.searchParams.get("graded") === "1";
+    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+    const wait = rateLimit(ip, Number(env.RATE_LIMIT_PER_MIN) > 0 ? Number(env.RATE_LIMIT_PER_MIN) : RATE_LIMIT_PER_MIN);
+    if (wait) {
+      return json(request, env, { error: "rate_limited", detail: `Too many requests. Try again in ${wait} s.`, searchUrl: searchUrl(q) }, 429, {
+        "Retry-After": String(wait),
+        "Cache-Control": "no-store",
+      });
+    }
+    // Graded slabs are left out unless asked for (graded=1) or the search itself names a grader ("PSA 10").
+    const includeGraded = url.searchParams.get("graded") === "1" || GRADED.test(q);
 
     const key = new URL("https://cache.internal/ebay");
     key.searchParams.set("q", q.toLowerCase());

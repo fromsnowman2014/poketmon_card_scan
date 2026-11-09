@@ -1,51 +1,55 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ExternalLink } from '../../components/ExternalLink';
+import { Icon } from '../../components/Icon';
 import { Money } from '../../components/Money';
 import { Skeleton } from '../../components/Skeleton';
-import { ebayLinks, ebayQuery, fetchEbaySummary, type EbayCard } from '../../lib/ebay';
+import { ebayLinks, fetchEbaySummary } from '../../lib/ebay';
+import { useRates } from '../../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
+import { formatMoney } from '../../lib/pricing';
 import { useSettings } from '../../lib/store';
 import type { EbayListing, EbaySummary } from '../../lib/types';
-import { timeLeft } from './format';
+import { auctionHeading, bidsText, shippingNote, timeLeft } from './format';
 
 type Key =
   | 'title'
-  | 'searching'
   | 'buyNowFrom'
   | 'typical'
-  | 'auctionCount'
-  | 'bids'
+  | 'totalIncl'
+  | 'usOnly'
+  | 'startBid'
+  | 'currentBid'
   | 'auctions'
   | 'buyNow'
   | 'sold'
-  | 'newTab'
-  | 'grownUp';
+  | 'opens';
 
 const STRINGS: Strings<Key> = {
   ko: {
     title: 'eBay에서 보기',
-    searching: '검색어: {q}',
-    buyNowFrom: '바로 구매 최저가',
-    typical: '보통',
-    auctionCount: '경매 중 {n}개',
-    bids: '입찰 {n}번',
-    auctions: '경매 중',
-    buyNow: '바로 구매',
-    sold: '팔린 가격',
-    newTab: '(새 탭)',
-    grownUp: '부모님이 설정에서 eBay 실시간 가격을 켤 수 있어요',
+    buyNowFrom: '지금 살 수 있는 최저가',
+    typical: '보통 가격',
+    totalIncl: '배송비 포함',
+    usOnly: '미국 eBay 기준 · 한국으로 배송하면 더 비싸요',
+    startBid: '시작가',
+    currentBid: '현재가',
+    auctions: '경매 가격 보기',
+    buyNow: '지금 살 수 있는 가격',
+    sold: '팔린 가격 보기',
+    opens: 'eBay 웹사이트가 열려요 · 어른과 함께 봐요',
   },
   en: {
     title: 'On eBay',
-    searching: 'Searching: {q}',
-    buyNowFrom: 'Buy It Now from',
-    typical: 'Typical',
-    auctionCount: '{n} auctions',
-    bids: '{n} bids',
-    auctions: 'Auctions',
-    buyNow: 'Buy It Now',
+    buyNowFrom: 'Lowest buy-now price',
+    typical: 'Typical price',
+    totalIncl: 'incl. shipping',
+    usOnly: 'eBay US prices · Shipping abroad costs more',
+    startBid: 'Starting bid',
+    currentBid: 'Current bid',
+    auctions: 'Auction prices',
+    buyNow: 'Buy-now prices',
     sold: 'Sold prices',
-    newTab: '(new tab)',
-    grownUp: 'A grown\u2011up can turn on live eBay prices in Settings',
+    opens: 'Opens the eBay website · Look with a grown‑up',
   },
 };
 
@@ -76,34 +80,54 @@ function ListingPrice({ item }: { item: EbayListing }) {
   );
 }
 
+/** Shipping note in the display currency. */
+function useShippingNote(shipping: number | null | undefined): string {
+  const { currency } = useSettings();
+  const rates = useRates();
+  const lang = useUiLang();
+  return shippingNote(shipping, lang, (usd) => formatMoney(usd, currency, rates));
+}
+
 function LiveSummary({ summary }: { summary: EbaySummary }) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
+  const { buyNow } = summary;
+  const shipping = useShippingNote(buyNow.lowestShipping);
+  // Newer workers add shipping to both totals and report the lowest listing's part; older ones send price only.
+  const totals = typeof buyNow.lowestShipping === 'number';
+  // eBay's auction count can be > 0 while the worker filtered out every listing: then show nothing here.
   const auctions = summary.auctions.items.slice(0, MAX_AUCTIONS);
 
   return (
     <div className="stack-12 fade-in">
-      {summary.buyNow.lowest !== null && (
-        <div className="card-ebay-stats">
-          <div className="stack-4">
-            <span className="caption muted">{t('buyNowFrom')}</span>
-            <Money usd={summary.buyNow.lowest} className="card-ebay-big" />
-          </div>
-          {summary.buyNow.median !== null && (
+      {buyNow.lowest !== null && (
+        <div className="stack-8">
+          <div className="card-ebay-stats">
             <div className="stack-4">
-              <span className="caption muted">{t('typical')}</span>
-              <Money usd={summary.buyNow.median} className="card-ebay-big" />
+              <span className="caption muted">{t('buyNowFrom')}</span>
+              <Money usd={buyNow.lowest} className="card-ebay-big" />
+              <span className="caption muted">{shipping}</span>
             </div>
-          )}
+            {buyNow.median !== null && (
+              <div className="stack-4">
+                <span className="caption muted">{t('typical')}</span>
+                <Money usd={buyNow.median} className="card-ebay-big" />
+                {totals && <span className="caption muted">{t('totalIncl')}</span>}
+              </div>
+            )}
+          </div>
+          <p className="caption muted card-ebay-note">{t('usOnly')}</p>
         </div>
       )}
-      {summary.auctions.count > 0 && (
+      {auctions.length > 0 && (
         <div className="stack-8">
-          <h3 className="small muted card-ebay-sub">{t('auctionCount', { n: summary.auctions.count })}</h3>
+          <h3 className="small muted card-ebay-sub">
+            {auctionHeading(summary.auctions.count, summary.auctions.items.length, lang)}
+          </h3>
           <ul className="card-auctions">
             {auctions.map((item) => (
               <li key={item.url}>
-                <a className="card-auction" href={item.url} target="_blank" rel="noopener">
+                <ExternalLink site="eBay" className="card-auction" href={item.url}>
                   {item.image ? (
                     <img className="card-auction-thumb" src={item.image} alt="" loading="lazy" />
                   ) : (
@@ -112,18 +136,16 @@ function LiveSummary({ summary }: { summary: EbaySummary }) {
                   <span className="grow stack-4">
                     <span className="truncate small card-auction-title">{item.title}</span>
                     <span className="caption muted">
-                      {[
-                        item.bidCount !== undefined && t('bids', { n: item.bidCount }),
-                        item.endsAt && timeLeft(item.endsAt, lang),
-                      ]
+                      {[item.bidCount !== undefined && bidsText(item.bidCount, lang), item.endsAt && timeLeft(item.endsAt, lang)]
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
                   </span>
                   <span className="card-auction-price">
+                    <span className="caption muted">{t(item.bidCount === 0 ? 'startBid' : 'currentBid')}</span>
                     <ListingPrice item={item} />
                   </span>
-                </a>
+                </ExternalLink>
               </li>
             ))}
           </ul>
@@ -159,42 +181,48 @@ function LiveSkeleton() {
   );
 }
 
-/** eBay search links (always) plus live Buy It Now / auction prices when a parent set up the worker. */
-export function EbayPanel({ card }: { card: EbayCard }) {
+export interface EbayPanelProps {
+  /** eBay search words for the card (lib/ebay `ebayQuery`). */
+  query: string;
+}
+
+/**
+ * eBay price links (always) plus live Buy It Now / auction prices when a parent set up the worker.
+ * Every link goes through the grown-up check (ExternalLink).
+ */
+export function EbayPanel({ query }: EbayPanelProps) {
   const t = useStrings(STRINGS);
   const { ebayWorkerUrl } = useSettings();
-  const query = useMemo(() => ebayQuery(card), [card]);
   const links = useMemo(() => ebayLinks(query), [query]);
   const summary = useEbaySummary(ebayWorkerUrl, query);
 
-  const buttons = [
+  const tiles = [
     { href: links.auctions, emoji: '🔨', label: t('auctions') },
-    { href: links.buyNow, emoji: '🛒', label: t('buyNow') },
+    { href: links.buyNow, emoji: '🏷️', label: t('buyNow') },
     { href: links.sold, emoji: '🧾', label: t('sold') },
   ];
 
   return (
     <section className="surface card-ebay stack-16" aria-labelledby="card-ebay-title">
-      <div className="stack-4">
-        <h2 id="card-ebay-title" className="h2">
-          {t('title')}
-        </h2>
-        <p className="caption muted truncate">{t('searching', { q: query })}</p>
-      </div>
+      <h2 id="card-ebay-title" className="h2">
+        {t('title')}
+      </h2>
       {ebayWorkerUrl && summary === undefined && <LiveSkeleton />}
       {ebayWorkerUrl && summary && <LiveSummary summary={summary} />}
-      <div className="card-ebay-links">
-        {buttons.map((b) => (
-          <a key={b.label} className="card-ebay-link" href={b.href} target="_blank" rel="noopener">
-            <span className="card-ebay-emoji" aria-hidden="true">
-              {b.emoji}
-            </span>
-            {b.label}
-            <span className="sr-only">{t('newTab')}</span>
-          </a>
-        ))}
+      <div className="stack-8">
+        <div className="card-ebay-links">
+          {tiles.map((tile) => (
+            <ExternalLink key={tile.href} site="eBay" className="card-ebay-link" href={tile.href}>
+              <Icon name="external-link" size={14} strokeWidth={2.5} className="card-ebay-out" />
+              <span className="card-ebay-emoji" aria-hidden="true">
+                {tile.emoji}
+              </span>
+              {tile.label}
+            </ExternalLink>
+          ))}
+        </div>
+        <p className="caption muted card-ebay-hint">{t('opens')}</p>
       </div>
-      {!ebayWorkerUrl && <p className="caption muted card-ebay-hint">{t('grownUp')}</p>}
     </section>
   );
 }

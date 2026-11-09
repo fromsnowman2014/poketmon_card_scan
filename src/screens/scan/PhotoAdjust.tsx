@@ -5,26 +5,50 @@ import type { Rect } from '../../lib/imageProc';
 import { GuideFrame } from './GuideFrame';
 import { clampView, frameToSource, initialView, zoomAt, type Size, type View } from './panZoom';
 
-const STRINGS: Strings<'back' | 'title' | 'hint' | 'zoomIn' | 'zoomOut' | 'use' | 'skip'> = {
+const STRINGS: Strings<'back' | 'title' | 'hint' | 'zoomIn' | 'zoomOut' | 'use' | 'skip' | 'rotate'> = {
   ko: {
     back: '뒤로',
-    title: '카드를 네모에 맞춰요',
+    title: '카드를 네모에 꽉 맞춰요',
     hint: '끌어서 옮기고, 두 손가락으로 키워요',
     zoomIn: '크게',
     zoomOut: '작게',
     use: '이걸로 찾기',
     skip: '그냥 찾기',
+    rotate: '돌리기',
   },
   en: {
     back: 'Back',
-    title: 'Line up the card',
+    title: 'Fit the card in the box',
     hint: 'Drag to move, pinch to zoom',
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
     use: 'Use this',
     skip: 'Just search',
+    rotate: 'Rotate',
   },
 };
+
+/** Lucide "rotate-cw" (the shared Icon set has no rotate glyph). */
+function RotateIcon() {
+  return (
+    <svg
+      className="icon"
+      width={20}
+      height={20}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
 
 const BUTTON_ZOOM = 1.25;
 
@@ -36,29 +60,34 @@ export interface PhotoAdjustProps {
   onUse: (rect: { x: number; y: number; width: number; height: number }) => void;
   /** Search without adjusting (centered crop). */
   onSkip: () => void;
+  /** Turn the photo 90° clockwise (the parent passes the turned `file` and `photo` back). */
+  onRotate: () => void;
   onBack: () => void;
 }
 
 type Point = { x: number; y: number };
 
 /** A picked photo under the guide frame: drag to move, pinch / wheel / ± buttons to zoom. */
-export function PhotoAdjust({ file, photo, onUse, onSkip, onBack }: PhotoAdjustProps) {
+export function PhotoAdjust({ file, photo, onUse, onSkip, onRotate, onBack }: PhotoAdjustProps) {
   const t = useStrings(STRINGS);
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const [url, setUrl] = useState<string>();
+  // Tagged with its file, so a turned photo never shows the previous image at the new size for a frame.
+  const [shown, setShown] = useState<{ file: Blob; url: string }>();
   const [view, setView] = useState<View>();
   const base = useRef<View>();
   const frame = useRef<Rect>({ x: 0, y: 0, w: 1, h: 1 });
   const pointers = useRef(new Map<number, Point>());
 
   useEffect(() => {
-    const u = URL.createObjectURL(file);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
+    const url = URL.createObjectURL(file);
+    setShown({ file, url });
+    return () => URL.revokeObjectURL(url);
   }, [file]);
+  const url = shown?.file === file ? shown.url : undefined;
 
-  // Measure the frame (relative to the stage) and start from the centered-card view; again after rotation.
+  // Measure the frame (relative to the stage) and start from the centered-card view; again after a resize or
+  // when the photo is turned.
   useLayoutEffect(() => {
     const reset = () => {
       const f = frameRef.current?.getBoundingClientRect();
@@ -191,9 +220,15 @@ export function PhotoAdjust({ file, photo, onUse, onSkip, onBack }: PhotoAdjustP
               <Icon name="plus" size={24} />
             </button>
           </div>
-          <button type="button" className="scan-text-btn" onClick={onSkip}>
-            {t('skip')}
-          </button>
+          <div className="scan-adjust-extra">
+            <button type="button" className="scan-pill" onClick={onRotate}>
+              <RotateIcon />
+              {t('rotate')}
+            </button>
+            <button type="button" className="scan-text-btn" onClick={onSkip}>
+              {t('skip')}
+            </button>
+          </div>
         </div>
       </div>
     </div>

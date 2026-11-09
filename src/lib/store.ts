@@ -1,7 +1,7 @@
 // App state persisted to localStorage: settings, My Cards, recently viewed, daily value snapshots.
 // Each key holds a versioned envelope { v, data }; anything unreadable falls back to defaults.
 import { useSyncExternalStore } from 'react';
-import { clearCache } from './cache';
+import { clearCache, writeWithRoom } from './cache';
 import type {
   CardBrief,
   CardDetail,
@@ -29,6 +29,7 @@ const isPrice = (x: unknown): x is number | null => x === null || isNum(x);
 const isLang = (x: unknown): x is CardLang => LANGS.includes(x as CardLang);
 const isDexIds = (x: unknown): x is number[] | undefined => x === undefined || (Array.isArray(x) && x.every(isNum));
 const optStr = (x: unknown): x is string | undefined => x === undefined || isStr(x);
+const optBool = (x: unknown): x is boolean | undefined => x === undefined || typeof x === 'boolean';
 
 function oneOf<T extends string>(x: unknown, allowed: readonly T[], fallback: T): T {
   return allowed.includes(x as T) ? (x as T) : fallback;
@@ -53,16 +54,20 @@ function readKey(key: string): unknown {
   }
 }
 
-/** False when the value could not be saved (quota, private mode). */
+/**
+ * False when the value could not be saved (private mode, or quota even after dropping cached API data —
+ * cache.ts can always fetch that again, the kid's cards cannot be).
+ */
 function writeKey(key: string, data: unknown): boolean {
   const s = storage();
   if (!s) return false;
+  let raw: string;
   try {
-    s.setItem(key, JSON.stringify({ v: VERSION, data }));
-    return true;
+    raw = JSON.stringify({ v: VERSION, data });
   } catch {
     return false;
   }
+  return writeWithRoom(() => s.setItem(key, raw));
 }
 
 interface Persisted<T> {
@@ -108,10 +113,12 @@ function useStore<T>(store: Persisted<T>): T {
 
 // ---------- Settings ----------
 
+/** Korean devices start in Korean with prices in won (kids read "₩" amounts), others in English with dollars. */
 function defaultSettings(): Settings {
   const nav = typeof navigator !== 'undefined' ? navigator.language ?? '' : '';
   const uiLang: UiLang = nav.toLowerCase().startsWith('ko') ? 'ko' : 'en';
-  return { uiLang, currency: 'USD', searchLang: uiLang === 'ko' ? 'ja' : 'en', ebayWorkerUrl: '', theme: 'system' };
+  const ko = uiLang === 'ko';
+  return { uiLang, currency: ko ? 'KRW' : 'USD', searchLang: ko ? 'ja' : 'en', ebayWorkerUrl: '', theme: 'system' };
 }
 
 /** Valid fields of `raw`, others from `d`. */
@@ -154,6 +161,7 @@ function isCollectionItem(x: unknown): x is CollectionItem {
     isNum(x.qty) &&
     x.qty >= 1 &&
     isPrice(x.priceUsd) &&
+    optBool(x.priceApprox) &&
     isPrice(x.firstPriceUsd) &&
     isStr(x.priceUpdatedAt) &&
     isStr(x.addedAt) &&
@@ -162,7 +170,27 @@ function isCollectionItem(x: unknown): x is CollectionItem {
   );
 }
 
-const collection = persisted('cc:collection', (raw) => (Array.isArray(raw) ? raw.filter(isCollectionItem) : []));
+const collectionStore = persisted('cc:collection', (raw) => (Array.isArray(raw) ? raw.filter(isCollectionItem) : []));
+const saveFailedListeners = new Set<() => void>();
+
+/** My Cards, telling `onCollectionSaveFailed` listeners when a change only lives in memory (storage full/blocked). */
+const collection: Persisted<CollectionItem[]> = {
+  ...collectionStore,
+  set(next) {
+    const saved = collectionStore.set(next);
+    if (!saved) saveFailedListeners.forEach((l) => l());
+    return saved;
+  },
+};
+
+/**
+ * Called whenever a change to My Cards could not be written to localStorage (it still shows until the app is
+ * closed). Show a "couldn't save" toast from the UI. Returns an unsubscribe function.
+ */
+export function onCollectionSaveFailed(listener: () => void): () => void {
+  saveFailedListeners.add(listener);
+  return () => saveFailedListeners.delete(listener);
+}
 
 /** Stable key of a saved card: `${lang}:${id}:${variant}`. */
 export function collectionKey(card: Pick<CardBrief, 'lang' | 'id'>, variantKey: string): string {
@@ -174,21 +202,40 @@ export function useCollection(): CollectionItem[] {
   return useStore(collection);
 }
 
+/** Asks the browser once to keep this site's storage (My Cards) when space runs low. Best effort, never throws. */
+let persistAsked = false;
+function askPersistentStorage(): void {
+  if (persistAsked) return;
+  persistAsked = true;
+  try {
+    void globalThis.navigator?.storage?.persist?.().catch(() => undefined);
+  } catch {
+    // not supported
+  }
+}
+
 /**
  * Adds one copy of the card's variant (qty+1 when already saved) and returns its collection key.
- * The variant's summary.market becomes priceUsd (and firstPriceUsd for a new entry).
+ * The variant's summary.market becomes priceUsd (and firstPriceUsd for a new entry); summary.converted priceApprox.
  */
 export function addToCollection(card: CardDetail, variantKey: string): string {
   const key = collectionKey(card, variantKey);
-  const price = card.variants.find((v) => v.key === variantKey)?.summary?.market ?? null;
+  const summary = card.variants.find((v) => v.key === variantKey)?.summary;
+  const price = summary?.market ?? null;
+  const approx = price !== null && !!summary?.converted;
   const now = new Date().toISOString();
   const items = collection.get();
+  askPersistentStorage();
 
   if (items.some((i) => i.key === key)) {
     collection.set(
       items.map((i) =>
         i.key === key
-          ? { ...i, qty: Math.min(i.qty + 1, MAX_QTY), ...(price !== null && { priceUsd: price, priceUpdatedAt: now }) }
+          ? {
+              ...i,
+              qty: Math.min(i.qty + 1, MAX_QTY),
+              ...(price !== null && { priceUsd: price, priceApprox: approx, priceUpdatedAt: now }),
+            }
           : i,
       ),
     );
@@ -208,6 +255,7 @@ export function addToCollection(card: CardDetail, variantKey: string): string {
     variant: variantKey,
     qty: 1,
     priceUsd: price,
+    priceApprox: approx,
     firstPriceUsd: price,
     priceUpdatedAt: now,
     addedAt: now,
@@ -232,19 +280,22 @@ export function setQuantity(key: string, qty: number): void {
   collection.set(collection.get().map((i) => (i.key === key ? { ...i, qty: n } : i)));
 }
 
-export function updateCollectionPrice(key: string, priceUsd: number | null): void {
+/** Stores a re-checked price (approx: converted from EUR). firstPriceUsd is filled if it was null. */
+export function updateCollectionPrice(key: string, priceUsd: number | null, approx = false): void {
   const now = new Date().toISOString();
   collection.set(
     collection
       .get()
       .map((i) =>
-        i.key === key ? { ...i, priceUsd, priceUpdatedAt: now, firstPriceUsd: i.firstPriceUsd ?? priceUsd } : i,
+        i.key === key
+          ? { ...i, priceUsd, priceApprox: priceUsd !== null && approx, priceUpdatedAt: now, firstPriceUsd: i.firstPriceUsd ?? priceUsd }
+          : i,
       ),
   );
 }
 
 /** Σ priceUsd × qty, rounded to cents; unpriced cards count as 0. */
-export function collectionTotalUsd(items: CollectionItem[]): number {
+export function collectionTotalUsd(items: readonly CollectionItem[]): number {
   const total = items.reduce((sum, i) => sum + (i.priceUsd ?? 0) * i.qty, 0);
   return Math.round(total * 100) / 100;
 }
@@ -312,6 +363,7 @@ function isHistoryItem(x: unknown): x is HistoryItem {
     isStr(x.setId) &&
     optStr(x.setName) &&
     isPrice(x.priceUsd) &&
+    optBool(x.priceApprox) &&
     isStr(x.viewedAt) &&
     isDexIds(x.dexIds) &&
     optStr(x.imageFallback)
@@ -327,7 +379,8 @@ export function useHistory(): HistoryItem[] {
   return useStore(recent);
 }
 
-export function pushHistory(card: CardDetail, priceUsd: number | null): void {
+/** Remembers a viewed card (newest first, one per card); approx: priceUsd was converted from EUR. */
+export function pushHistory(card: CardDetail, priceUsd: number | null, approx = false): void {
   const item: HistoryItem = {
     id: card.id,
     lang: card.lang,
@@ -337,6 +390,7 @@ export function pushHistory(card: CardDetail, priceUsd: number | null): void {
     setId: card.setId,
     setName: card.setName,
     priceUsd,
+    priceApprox: priceUsd !== null && approx,
     viewedAt: new Date().toISOString(),
     dexIds: card.dexIds,
     imageFallback: card.imageFallback,
@@ -351,14 +405,23 @@ export function clearHistory(): void {
 
 // ---------- Daily value snapshots ----------
 
-function isSnapshot(x: unknown): x is ValueSnapshot {
-  return isObj(x) && isStr(x.date) && /^\d{4}-\d{2}-\d{2}$/.test(x.date) && isNum(x.totalUsd);
+type SnapshotCards = NonNullable<ValueSnapshot['cards']>;
+
+const isSnapshotCard = (x: unknown): x is [number, number] =>
+  Array.isArray(x) && x.length === 2 && isNum(x[0]) && isNum(x[1]) && x[1] >= 1;
+
+/** A valid snapshot; a malformed `cards` map is dropped (the snapshot then only has its total). */
+function toSnapshot(x: unknown): ValueSnapshot | undefined {
+  if (!isObj(x) || !isStr(x.date) || !/^\d{4}-\d{2}-\d{2}$/.test(x.date) || !isNum(x.totalUsd)) return undefined;
+  const cards = isObj(x.cards) && Object.values(x.cards).every(isSnapshotCard) ? (x.cards as SnapshotCards) : undefined;
+  return cards ? { date: x.date, totalUsd: x.totalUsd, cards } : { date: x.date, totalUsd: x.totalUsd };
 }
 
 const snapshots = persisted('cc:snapshots', (raw) =>
   Array.isArray(raw)
     ? raw
-        .filter(isSnapshot)
+        .map(toSnapshot)
+        .filter((s): s is ValueSnapshot => !!s)
         .sort((a, b) => a.date.localeCompare(b.date))
         .slice(-MAX_SNAPSHOTS)
     : [],
@@ -369,20 +432,46 @@ function localDate(d = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const dayNumber = (date: string) => Date.parse(`${date}T00:00:00Z`) / 86_400_000;
+
+/**
+ * Per-card data is only needed where weekChange can still pick a baseline: snapshots of the last 7 days and the
+ * newest one at least 7 days old (anything older is always further from "a week ago"). Older ones keep their total.
+ */
+function trimCards(list: ValueSnapshot[], today: string): ValueSnapshot[] {
+  const now = dayNumber(today);
+  let anchor = -1;
+  list.forEach((s, i) => {
+    if (now - dayNumber(s.date) >= 7) anchor = i;
+  });
+  return list.map((s, i) => (i < anchor && s.cards ? { date: s.date, totalUsd: s.totalUsd } : s));
+}
+
+function sameCards(a: SnapshotCards | undefined, b: SnapshotCards): boolean {
+  if (!a) return false;
+  const keys = Object.keys(b);
+  return keys.length === Object.keys(a).length && keys.every((k) => a[k]?.[0] === b[k][0] && a[k]?.[1] === b[k][1]);
+}
+
 /** Oldest first, one per local day, max 120. */
 export function useSnapshots(): ValueSnapshot[] {
   return useStore(snapshots);
 }
 
-/** Upserts today's snapshot (no-op when unchanged). */
-export function recordSnapshot(totalUsd: number): void {
-  if (!isNum(totalUsd)) return;
+/**
+ * Upserts today's snapshot of My Cards: the total plus each priced card's price and quantity, so
+ * "since last week" can tell price changes from cards added or removed (no-op when unchanged).
+ */
+export function recordSnapshot(items: readonly CollectionItem[]): void {
+  const totalUsd = collectionTotalUsd(items);
+  const cards: SnapshotCards = {};
+  for (const i of items) if (i.priceUsd !== null) cards[i.key] = [i.priceUsd, i.qty];
   const date = localDate();
   const list = snapshots.get();
   const last = list[list.length - 1];
-  if (last?.date === date && last.totalUsd === totalUsd) return;
+  if (last?.date === date && last.totalUsd === totalUsd && sameCards(last.cards, cards)) return;
   const rest = last?.date === date ? list.slice(0, -1) : list;
-  snapshots.set([...rest, { date, totalUsd }].slice(-MAX_SNAPSHOTS));
+  snapshots.set(trimCards([...rest, { date, totalUsd, cards }], date).slice(-MAX_SNAPSHOTS));
 }
 
 // ---------- Reset ----------

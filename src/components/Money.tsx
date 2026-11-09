@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useRates } from '../lib/fx';
 import { formatMoney } from '../lib/pricing';
 import { useSettings } from '../lib/store';
 import { cx } from './cx';
+import { moneyChars } from './moneyChars';
 import './Money.css';
 
 export interface MoneyProps {
@@ -48,16 +49,21 @@ function useCountUp(target: number | null | undefined, enabled: boolean): number
   return enabled ? shown : target;
 }
 
-/** A price in the user's display currency (settings.currency), using live exchange rates. */
+/**
+ * A price in the user's display currency (settings.currency), using live exchange rates. With KRW the won amount
+ * is the main number and the dollar amount the small secondary line, and the other way round with USD.
+ */
 export function Money({ usd, approx, secondary, animate = false, className }: MoneyProps) {
   const { currency } = useSettings();
   const rates = useRates();
   const shown = useCountUp(usd, animate);
   const other = currency === 'USD' ? 'KRW' : 'USD';
   const hasValue = typeof usd === 'number' && Number.isFinite(usd);
+  // The final amount (not the counting-up one), so a big total doesn't change size while it animates.
+  const style = { '--money-chars': moneyChars(formatMoney(usd, currency, rates), !!approx && hasValue) } as CSSProperties;
 
   return (
-    <span className={cx('money', secondary && 'money-stack', className)}>
+    <span className={cx('money', secondary && 'money-stack', className)} style={style}>
       <span className="money-main">
         {approx && hasValue && <span className="money-approx">≈</span>}
         {formatMoney(shown, currency, rates)}

@@ -3,7 +3,7 @@ import { HttpError } from './cache';
 import { localizedName, translateCardName } from './names';
 import type { CardDetail, EbayListing, EbaySummary } from './types';
 
-export type EbayCard = Pick<CardDetail, 'name' | 'lang' | 'localId' | 'setId' | 'dexIds' | 'setName' | 'setOfficialCount'>;
+export type EbayCard = Pick<CardDetail, 'name' | 'lang' | 'localId' | 'setId' | 'dexIds' | 'setName' | 'setOfficialCount' | 'printedNumber'>;
 
 export interface EbayLinks {
   all: string;
@@ -18,21 +18,33 @@ const TIMEOUT_MS = 10_000;
 
 const collapse = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+/** TCGdex names subset sets after their parent ("Brilliant Stars Trainer Gallery"); sellers write the parent. */
+const SUBSET_SUFFIX = /\s+(?:Trainer Gallery|Galarian Gallery|Shiny Vault)$/i;
+const PROMO_SET = /promo/i;
+
 /**
- * Keywords that match how sellers title the card:
- * EN "Lopunny 084/131 Prismatic Evolutions"; JA "Hawlucha sv8a 084/187 Japanese".
+ * Keywords that match how sellers title the card (the eBay worker ANDs every word, so no made-up tokens):
+ * EN "Lopunny 084/131 Prismatic Evolutions", "Zekrom TG05/TG30 Brilliant Stars"; EN promos
+ * "Pikachu with Grey Felt Hat 085 promo", "Galarian Moltres SWSH284" (never the TCGdex "Black Star Promos" name);
+ * JA "Hawlucha sv8a 084/187 Japanese", promos "Pikachu 085/SV-P Japanese"; JA/KO trainers "sv8a 232/187 Japanese".
  * Japanese titles on eBay US are written in English, and the printed code is the most unique token.
  */
 export function ebayQuery(card: EbayCard): string {
-  const numbered = card.setOfficialCount ? `${card.localId}/${card.setOfficialCount}` : card.localId;
-  if (card.lang === 'en') return collapse(`${card.name} ${numbered} ${card.setName}`);
+  const printed = card.printedNumber ?? (card.setOfficialCount ? `${card.localId}/${card.setOfficialCount}` : card.localId);
+  if (card.lang === 'en') {
+    if (PROMO_SET.test(card.setName)) {
+      // "SWSH284" / "SM60" are unique on their own; a bare "085" needs the word promo.
+      return collapse(/^[A-Z]+\d+$/i.test(card.localId) ? `${card.name} ${card.localId}` : `${card.name} ${card.localId} promo`);
+    }
+    return collapse(`${card.name} ${printed} ${card.setName.replace(SUBSET_SUFFIX, '')}`);
+  }
 
-  const name = translateCardName(card.name, card.dexIds, 'en') ?? localizedName(card.dexIds, 'en') ?? 'pokemon';
   // JA promos print "085/SV-P" (no set total); sellers copy that form.
-  const code =
-    !card.setOfficialCount && /-P$/i.test(card.setId)
-      ? `${card.localId}/${card.setId.toUpperCase()}`
-      : `${card.setId.toLowerCase()} ${numbered}`;
+  const jaPromo = !card.setOfficialCount && /-P$/i.test(card.setId);
+  const code = jaPromo ? (card.printedNumber ?? `${card.localId}/${card.setId.toUpperCase()}`) : `${card.setId.toLowerCase()} ${printed}`;
+  // Trainers/energy have no English name here: the printed code (with its total) is specific enough on its own.
+  const name =
+    translateCardName(card.name, card.dexIds, 'en') ?? localizedName(card.dexIds, 'en') ?? (code.includes('/') ? '' : 'pokemon');
   return collapse(`${name} ${code} ${card.lang === 'ko' ? 'Korean' : 'Japanese'}`);
 }
 
@@ -116,6 +128,7 @@ function parseSummary(x: unknown): EbaySummary {
       count: x.buyNow.count,
       lowest: numOrNull(x.buyNow.lowest),
       median: numOrNull(x.buyNow.median),
+      ...('lowestShipping' in x.buyNow ? { lowestShipping: numOrNull(x.buyNow.lowestShipping) } : {}),
       items: parseListings(x.buyNow.items),
     },
     searchUrl,

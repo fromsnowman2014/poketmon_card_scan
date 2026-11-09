@@ -1,5 +1,7 @@
 # CI for pull requests; CI + GitHub Pages deploy for pushes to main.
-# One-time setup: repo Settings → Pages → Source: "GitHub Actions".
+# One-time setup (see README "배포 / Deploying"): the repo must be public (or on GitHub Pro), and
+# Settings → Pages → Source: "GitHub Actions". The base path comes from the Pages settings, so a renamed repo or a
+# custom domain needs no change here.
 name: Build & Deploy
 
 on:
@@ -19,6 +21,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      pages: ${{ steps.pages.outcome }}
     env:
       DEPLOY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
@@ -37,19 +41,35 @@ jobs:
       - name: Test eBay worker
         run: node worker/test.mjs
 
-      - name: Type-check and build
-        run: npm run build
-
+      # Before the build: its base_path ("/poketmon_card_scan", or "" for a custom domain) becomes Vite's base.
+      # Until Pages is enabled (or when the app is hosted elsewhere, e.g. Cloudflare Pages) this step fails with
+      # "Get Pages site failed": the run stays green, skips the deploy and shows a warning instead.
       - if: env.DEPLOY == 'true'
+        id: pages
+        continue-on-error: true
         uses: actions/configure-pages@v5
 
-      - if: env.DEPLOY == 'true'
+      - name: Warn when GitHub Pages is off
+        if: env.DEPLOY == 'true' && steps.pages.outcome != 'success'
+        run: >-
+          echo "::warning title=Not deployed to GitHub Pages::Tests and build passed, but GitHub Pages is not enabled.
+          Settings → Pages → Source: GitHub Actions (a private repo needs GitHub Pro, or make it public), then
+          Actions → Build & Deploy → Run workflow. See README."
+
+      - name: Type-check and build
+        run: npm run build
+        env:
+          # Deploys: the Pages path plus a trailing slash ("/" for a custom domain). PRs: /<repo name>/.
+          # vite.config.ts normalises the slashes.
+          BASE_PATH: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || format('/{0}/', github.event.repository.name) }}
+
+      - if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.build.outputs.pages == 'success'
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -2,7 +2,8 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 40px);
+  /* Above the tab bar and its raised Scan button. */
+  bottom: calc(var(--tabbar-h) + var(--tabbar-lift) + var(--safe-bottom) + 20px);
   z-index: var(--z-toast);
   display: flex;
   justify-content: center;

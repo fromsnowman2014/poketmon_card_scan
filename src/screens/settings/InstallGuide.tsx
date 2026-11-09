@@ -2,13 +2,14 @@ import { useId } from 'react';
 import { Icon } from '../../components/Icon';
 import { useStrings, type Strings } from '../../lib/i18n';
 
-const STRINGS: Strings<'title' | 'installed' | 'step1' | 'step2' | 'step3'> = {
+const STRINGS: Strings<'title' | 'installed' | 'step1' | 'step2' | 'step3' | 'collectInApp'> = {
   ko: {
     title: '아이폰에 설치하기',
     installed: '이미 홈 화면에 설치됐어요 ✅',
     step1: 'Safari(사파리)로 이 앱을 열어요',
     step2: '아래쪽 공유 버튼 {share} 을 눌러요',
     step3: "'홈 화면에 추가'를 누르면 끝!",
+    collectInApp: '홈 화면 앱에서 카드를 모아요. 사파리에서 모은 카드는 앱으로 옮겨지지 않아요.',
   },
   en: {
     title: 'Install on iPhone',
@@ -16,6 +17,7 @@ const STRINGS: Strings<'title' | 'installed' | 'step1' | 'step2' | 'step3'> = {
     step1: 'Open this app in Safari',
     step2: 'Tap the Share button {share}',
     step3: 'Tap “Add to Home Screen”. Done!',
+    collectInApp: 'Collect your cards in the Home Screen app. Cards saved in Safari don’t move to the app.',
   },
 };
 
@@ -47,19 +49,23 @@ export function InstallGuide() {
         <Icon name="home" size={20} />
         {t('title')}
       </h2>
-      <div className="surface">
+      <div className="surface stack-16">
         {isInstalled() ? (
           <p className="body">{t('installed')}</p>
         ) : (
-          <ol className="settings-steps">
-            <li>{t('step1')}</li>
-            <li>
-              {shareBefore}
-              <ShareGlyph />
-              {shareAfter}
-            </li>
-            <li>{t('step3')}</li>
-          </ol>
+          <>
+            <ol className="settings-steps">
+              <li>{t('step1')}</li>
+              <li>
+                {shareBefore}
+                <ShareGlyph />
+                {shareAfter}
+              </li>
+              <li>{t('step3')}</li>
+            </ol>
+            {/* Home Screen apps get their own storage on iOS: My Cards saved in a Safari tab stay there. */}
+            <p className="small muted settings-text">{t('collectInApp')}</p>
+          </>
         )}
       </div>
     </section>

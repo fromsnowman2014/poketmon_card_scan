@@ -3,6 +3,7 @@ import {
   CARD_ASPECT,
   CODE_STRIP,
   NAME_STRIP,
+  SMALL_CODE_STRIP,
   cardSourceRect,
   centerCardRect,
   clipRect,
@@ -13,6 +14,8 @@ import {
   pad,
   shear,
   threshold,
+  turnedCardRect,
+  turnPoint,
   type Pixels,
 } from './imageProc';
 
@@ -152,5 +155,56 @@ describe('geometry', () => {
     expect(clipRect({ x: -10, y: 5, w: 50, h: 200 }, 30, 100)).toEqual({ x: 0, y: 5, w: 30, h: 95 });
     expect(clipRect({ x: 10, y: 10, w: 5, h: 5 }, 100, 100)).toEqual({ x: 10, y: 10, w: 5, h: 5 });
     expect(clipRect({ x: 200, y: 0, w: 5, h: 5 }, 100, 100)).toBeNull();
+  });
+});
+
+describe('code strip bands', () => {
+  // The collector line of an SV card spans 0.944–0.966 of the card height (measured on the sample photo).
+  const lineInFrame = (fill: number, offset = 0) => [0.5 + (0.944 - 0.5) * fill + offset, 0.5 + (0.966 - 0.5) * fill + offset];
+  const holds = (band: typeof CODE_STRIP, fill: number, offset: number) => {
+    const [top, bottom] = lineInFrame(fill, offset);
+    return top > band.y && bottom < band.y + band.h;
+  };
+
+  it('the usual band holds the whole line for a card filling 88–105% of the frame, a little off-center', () => {
+    for (const fill of [0.88, 0.9, 0.95, 1]) for (const offset of [-0.02, 0, 0.03]) expect(holds(CODE_STRIP, fill, offset), `${fill} ${offset}`).toBe(true);
+    expect(holds(CODE_STRIP, 1.05, 0)).toBe(true);
+    expect(holds(CODE_STRIP, 0.85, 0)).toBe(true);
+  });
+
+  it('the small-card band takes over for a card filling 70–88% of the frame', () => {
+    for (const fill of [0.7, 0.75, 0.8, 0.85]) for (const offset of [-0.02, 0, 0.02]) expect(holds(SMALL_CODE_STRIP, fill, offset), `${fill} ${offset}`).toBe(true);
+    expect(holds(SMALL_CODE_STRIP, 0.88, 0)).toBe(true);
+  });
+
+  it('both bands stay inside the card', () => {
+    for (const r of [CODE_STRIP, SMALL_CODE_STRIP]) expect(r.y + r.h).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('turning sideways photos', () => {
+  it('turnPoint maps corners for each quarter turn', () => {
+    // 400 × 300 picture: the top-left corner goes to the top-right (90°), bottom-right (180°), bottom-left (270°)
+    expect(turnPoint(0, 0, 400, 300, 1)).toEqual({ x: 300, y: 0 });
+    expect(turnPoint(0, 0, 400, 300, 2)).toEqual({ x: 400, y: 300 });
+    expect(turnPoint(0, 0, 400, 300, 3)).toEqual({ x: 0, y: 400 });
+    expect(turnPoint(400, 0, 400, 300, 1)).toEqual({ x: 300, y: 400 });
+  });
+
+  it('uses the centered guess on the turned picture without a frame or with the untouched one', () => {
+    expect(turnedCardRect(2016, 1512, 1)).toEqual(centerCardRect(1512, 2016));
+    const g = centerCardRect(2016, 1512);
+    const untouched = { x: g.x + 3, y: g.y - 2, width: g.w + 1, height: g.h + 1 };
+    expect(turnedCardRect(2016, 1512, 3, untouched)).toEqual(centerCardRect(1512, 2016));
+  });
+
+  it('keeps a placed frame centered on the same spot and lets its width span the card height', () => {
+    const frame = { x: 1000, y: 400, width: 600, height: 600 / CARD_ASPECT };
+    const r = turnedCardRect(2016, 1512, 1, frame);
+    const c = turnPoint(1300, 400 + frame.height / 2, 2016, 1512, 1);
+    expect(r.h).toBeCloseTo(600);
+    expect(r.w / r.h).toBeCloseTo(CARD_ASPECT);
+    expect(r.x + r.w / 2).toBeCloseTo(c.x);
+    expect(r.y + r.h / 2).toBeCloseTo(c.y);
   });
 });

@@ -2,15 +2,24 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// GitHub Pages serves the app from /<repo-name>/. Override with BASE_PATH=/ for other hosts.
-const base = process.env.BASE_PATH ?? '/poketmon_card_scan/';
+// GitHub Pages serves the app from /<repo-name>/. CI passes the real Pages path as BASE_PATH (so a renamed repo or a
+// custom domain still works); use BASE_PATH=/ for hosts that serve from the root (Cloudflare Pages, Netlify).
+// Unset or empty → the default. Slashes are normalised: "poketmon_card_scan" and "/x//" become "/poketmon_card_scan/", "/x/".
+function normalizeBase(raw: string | undefined): string {
+  const value = (raw ?? '').trim() || '/poketmon_card_scan/';
+  if (/^https?:\/\//i.test(value)) return value.endsWith('/') ? value : `${value}/`;
+  return `/${value}/`.replace(/\/{2,}/g, '/');
+}
+const base = normalizeBase(process.env.BASE_PATH);
 
 export default defineConfig({
   base,
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt': a new deploy waits instead of reloading the page while a kid is using it. src/main.tsx applies it
+      // when the app is hidden (or it activates by itself on the next cold launch).
+      registerType: 'prompt',
       manifest: {
         name: 'CardCheck - 카드 시세 스캐너',
         short_name: 'CardCheck',
@@ -29,6 +38,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Take control on the very first visit, so that session's OCR engine and card images go into the caches.
+        // Updates still wait for src/main.tsx: skipWaiting stays off.
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         runtimeCaching: [

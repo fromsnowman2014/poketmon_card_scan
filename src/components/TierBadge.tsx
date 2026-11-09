@@ -14,32 +14,36 @@ export const TIER_EMOJI: Record<ValueTier, string> = {
   treasure: '👑',
 };
 
-/** Short tier names: `useStrings(TIER_LABELS)(tier)`. */
+/**
+ * Short tier names: `useStrings(TIER_LABELS)(tier)`. Tiers are price bands (see pricing.valueTier), so they use
+ * money words a kid can't mistake for the rarity printed on the card (커먼, 레어, 슈퍼 레어 …).
+ */
 export const TIER_LABELS: Strings<ValueTier> = {
-  ko: { common: '흔한 카드', nice: '좋은 카드', rare: '레어', super: '슈퍼 레어', treasure: '보물' },
-  en: { common: 'Common', nice: 'Nice', rare: 'Rare', super: 'Super Rare', treasure: 'Treasure' },
+  ko: { common: '동전 카드', nice: '과자값 카드', rare: '용돈 카드', super: '귀한 카드', treasure: '보물 카드' },
+  en: { common: 'Pocket change', nice: 'Snack money', rare: 'Allowance', super: 'Prized', treasure: 'Treasure' },
 };
 
+/** Kind, upbeat lines for the result screen, cheap cards included. */
 const CHEERS: Strings<ValueTier> = {
   ko: {
-    common: '흔한 카드예요',
-    nice: '좋은 카드예요!',
-    rare: '레어 발견!',
-    super: '슈퍼 레어 등장!',
-    treasure: '보물이에요! 소중히 보관해요!',
+    common: '가격은 작아도 멋진 카드!',
+    nice: '과자값 카드예요!',
+    rare: '용돈 카드 발견!',
+    super: '귀한 카드 등장!',
+    treasure: '보물 카드예요! 소중히 보관해요!',
   },
   en: {
-    common: 'A common card',
-    nice: 'Nice card!',
-    rare: 'Rare find!',
-    super: 'Super rare!',
+    common: 'Small price, still awesome!',
+    nice: 'A snack-money card!',
+    rare: 'An allowance-size find!',
+    super: 'A prized card!',
     treasure: 'Treasure! Keep it safe!',
   },
 };
 
 export interface TierBadgeProps {
   tier: ValueTier;
-  /** Longer, excited copy for the result screen ("💎 Rare find!"). */
+  /** Longer, excited copy for the result screen ("💎 용돈 카드 발견!"). */
   cheer?: boolean;
   size?: 'sm' | 'md' | 'lg';
   className?: string;

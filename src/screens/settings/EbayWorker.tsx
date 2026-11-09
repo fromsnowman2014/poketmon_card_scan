@@ -5,21 +5,24 @@ import { fetchEbaySummary } from '../../lib/ebay';
 import { useStrings, type Strings } from '../../lib/i18n';
 import { updateSettings, useSettings } from '../../lib/store';
 
-type Failure = 'offline' | 'noKeys' | 'ebayDown' | 'slow' | 'badUrl';
+type Failure = 'offline' | 'noKeys' | 'ebayDown' | 'slow' | 'busy' | 'badUrl';
 
-const STRINGS: Strings<'title' | 'intro' | 'label' | 'test' | 'testing' | 'ok' | 'guide' | Failure> = {
+const STRINGS: Strings<'title' | 'intro' | 'label' | 'test' | 'testing' | 'ok' | 'auctions' | 'auctions1' | 'guide' | Failure> = {
   ko: {
     title: 'eBay 실시간 가격 (선택)',
     intro: '없어도 괜찮아요! eBay 버튼은 언제나 eBay 검색을 열어요. 어른이 무료 워커를 설치하면 앱 안에서 바로 최저가와 경매를 볼 수 있어요.',
     label: 'eBay 워커 주소',
     test: '연결 테스트',
     testing: '확인 중…',
-    ok: '연결됐어요! 즉시구매 {buyNow}개 · 경매 {auctions}개',
+    ok: '연결됐어요! 즉시구매 {buyNow}개 · {auctions}',
+    auctions: '경매 {n}개',
+    auctions1: '경매 1개',
     guide: '워커 설치 방법 보기 (GitHub)',
     offline: '인터넷이 없어요. 연결되면 다시 해 봐요.',
     noKeys: '워커에 eBay 키가 아직 없어요. 설치 방법 5단계를 확인해요.',
     ebayDown: 'eBay가 응답하지 않아요. 키를 확인하거나 잠시 뒤 다시 해 봐요.',
     slow: '응답이 너무 늦어요. 다시 해 봐요.',
+    busy: '너무 자주 눌렀어요. 1분 뒤에 다시 해 봐요.',
     badUrl: '워커에 연결할 수 없어요. 주소를 확인해요.',
   },
   en: {
@@ -28,12 +31,15 @@ const STRINGS: Strings<'title' | 'intro' | 'label' | 'test' | 'testing' | 'ok' |
     label: 'eBay worker URL',
     test: 'Test connection',
     testing: 'Checking…',
-    ok: 'Connected! {buyNow} Buy It Now · {auctions} auctions',
+    ok: 'Connected! {buyNow} Buy It Now · {auctions}',
+    auctions: '{n} auctions',
+    auctions1: '1 auction',
     guide: 'How to set up the worker (GitHub)',
     offline: 'No internet. Try again when you’re back online.',
     noKeys: 'The worker has no eBay keys yet. See step 5 of the guide.',
     ebayDown: 'eBay didn’t answer. Check the keys or try again later.',
     slow: 'That took too long. Try again.',
+    busy: 'Too many tries. Wait a minute and try again.',
     badUrl: 'Can’t reach the worker. Check the address.',
   },
 };
@@ -45,7 +51,10 @@ type TestState = { kind: 'idle' } | { kind: 'testing' } | { kind: 'ok'; buyNow: 
 
 function failureOf(err: unknown): Failure {
   if (!navigator.onLine) return 'offline';
-  if (err instanceof HttpError) return err.status === 500 ? 'noKeys' : err.status === 502 ? 'ebayDown' : 'badUrl';
+  if (err instanceof HttpError) {
+    if (err.status === 429) return 'busy'; // the worker's per-minute limit
+    return err.status === 500 ? 'noKeys' : err.status === 502 ? 'ebayDown' : 'badUrl';
+  }
   if (err instanceof DOMException && err.name === 'AbortError') return 'slow';
   return 'badUrl';
 }
@@ -119,7 +128,10 @@ export function EbayWorker() {
             {test.kind === 'ok' && (
               <span className="text-up">
                 <Icon name="check" size={18} />
-                {t('ok', { buyNow: test.buyNow, auctions: test.auctions })}
+                {t('ok', {
+                  buyNow: test.buyNow,
+                  auctions: test.auctions === 1 ? t('auctions1') : t('auctions', { n: test.auctions }),
+                })}
               </span>
             )}
             {test.kind === 'fail' && (

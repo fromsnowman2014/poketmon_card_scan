@@ -21,8 +21,14 @@ export type BoxLike = Pick<DOMRectReadOnly, 'x' | 'y' | 'width' | 'height'>;
 
 /** Pokémon cards are 63 × 88 mm. */
 export const CARD_ASPECT = 63 / 88;
-/** Bottom-left collector line ("G sv8a 084/187"); wide enough to absorb ±4% framing error. */
-export const CODE_STRIP: Rect = { x: 0, y: 0.9, w: 0.55, h: 0.1 };
+/**
+ * Bottom-left collector line ("G sv8a 084/187"), at ~0.944–0.966 of the card height. The band holds the whole
+ * line for a card filling ~85–105% of the frame (a little off-center too); a taller band reads more of the card's
+ * other text and needs more passes on well-framed cards. ocr.ts ignores text cut by the band's top/bottom edge.
+ */
+export const CODE_STRIP: Rect = { x: 0, y: 0.86, w: 0.55, h: 0.14 };
+/** Where the collector line sits when the card is held small (~70–88% of the frame): the scan's fallback band. */
+export const SMALL_CODE_STRIP: Rect = { x: 0, y: 0.78, w: 0.55, h: 0.14 };
 /** Card name at the top. */
 export const NAME_STRIP: Rect = { x: 0.12, y: 0.03, w: 0.63, h: 0.07 };
 
@@ -133,6 +139,37 @@ export function clipRect(r: Rect, w: number, h: number): Rect | null {
   return x1 > x0 && y1 > y0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 }
 
+/** Clockwise quarter turns: 1 = 90°, 2 = 180°, 3 = 270° (90° counter-clockwise). */
+export type QuarterTurns = 1 | 2 | 3;
+
+/** Where source px (x, y) lands after turning a srcW × srcH picture clockwise by `q` quarter turns. */
+export function turnPoint(x: number, y: number, srcW: number, srcH: number, q: QuarterTurns): { x: number; y: number } {
+  if (q === 1) return { x: srcH - y, y: x };
+  if (q === 2) return { x: srcW - x, y: srcH - y };
+  return { x: y, y: srcW - x };
+}
+
+/**
+ * The card rect to read on the picture turned by `q` (in turned px), for a photo whose card lies sideways.
+ * Without a frame, or with the untouched centered frame: the centered guess on the turned picture (the
+ * "Just search" crop). With a frame the kid placed: same center, turned, with the frame's width as the card's
+ * height (a sideways card fitted inside the portrait frame spans its width).
+ */
+export function turnedCardRect(srcW: number, srcH: number, q: QuarterTurns, frame?: BoxLike): Rect {
+  const sideways = q !== 2;
+  const [tw, th] = sideways ? [srcH, srcW] : [srcW, srcH];
+  const guess = centerCardRect(srcW, srcH);
+  const tol = guess.w * 0.02;
+  const untouched =
+    !frame ||
+    (Math.abs(frame.x - guess.x) < tol && Math.abs(frame.y - guess.y) < tol && Math.abs(frame.width - guess.w) < tol);
+  if (untouched) return centerCardRect(tw, th);
+  const c = turnPoint(frame.x + frame.width / 2, frame.y + frame.height / 2, srcW, srcH, q);
+  const h = sideways ? frame.width : frame.height;
+  const w = h * CARD_ASPECT;
+  return { x: c.x - w / 2, y: c.y - h / 2, w, h };
+}
+
 // ---------- canvas helpers (DOM) ----------
 
 export type CardSource = HTMLVideoElement | HTMLImageElement | ImageBitmap | HTMLCanvasElement;
@@ -174,6 +211,48 @@ export function cropToCard(source: CardSource, frame?: BoxLike, view?: BoxLike):
   if (src) {
     ctx.drawImage(source, src.x, src.y, src.w, src.h, (src.x - r.x) * scale, (src.y - r.y) * scale, src.w * scale, src.h * scale);
   }
+  return canvas;
+}
+
+/** Apply the clockwise turn by `q` to a context, so drawing the srcW × srcH source at (0, 0) lands turned. */
+function applyTurn(ctx: CanvasRenderingContext2D, q: QuarterTurns, srcW: number, srcH: number): void {
+  if (q === 1) ctx.translate(srcH, 0);
+  else if (q === 2) ctx.translate(srcW, srcH);
+  else ctx.translate(0, srcW);
+  ctx.rotate((q * Math.PI) / 2);
+}
+
+/** `cropToCard` on the picture turned by `q` quarter turns, for `turnedCardRect`. Output ≤ 1600 px wide. */
+export function cropTurnedCard(source: CardSource, q: QuarterTurns, frame?: BoxLike): HTMLCanvasElement {
+  const { w: srcW, h: srcH } = sourceSize(source);
+  const r = turnedCardRect(srcW, srcH, q, frame);
+  const scale = Math.min(1, MAX_CARD_WIDTH / r.w);
+  const canvas = makeCanvas(r.w * scale, r.h * scale);
+  const ctx = context2d(canvas);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.scale(scale, scale);
+  ctx.translate(-r.x, -r.y);
+  applyTurn(ctx, q, srcW, srcH);
+  ctx.drawImage(source, 0, 0, srcW, srcH);
+  return canvas;
+}
+
+// iOS keeps decoded photos and canvases in a tight memory budget: a turned photo is redrawn at most this big.
+const MAX_TURNED_SIDE = 2400;
+
+/** The whole picture turned clockwise by `q`, long side ≤ 2400 px (the Rotate button in the photo step). */
+export function turnPicture(source: CardSource, q: QuarterTurns = 1): HTMLCanvasElement {
+  const { w: srcW, h: srcH } = sourceSize(source);
+  const scale = Math.min(1, MAX_TURNED_SIDE / Math.max(srcW, srcH));
+  const [tw, th] = q === 2 ? [srcW, srcH] : [srcH, srcW];
+  const canvas = makeCanvas(tw * scale, th * scale);
+  const ctx = context2d(canvas);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.scale(canvas.width / tw, canvas.height / th);
+  applyTurn(ctx, q, srcW, srcH);
+  ctx.drawImage(source, 0, 0, srcW, srcH);
   return canvas;
 }
 

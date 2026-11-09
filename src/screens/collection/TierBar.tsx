@@ -4,8 +4,8 @@ import { useStrings, type Strings } from '../../lib/i18n';
 import type { ValueTier } from '../../lib/types';
 
 const STRINGS: Strings<'title' | 'mystery' | 'count'> = {
-  ko: { title: '카드 등급', mystery: '가격 없음', count: '{n}장' },
-  en: { title: 'Card levels', mystery: 'No price', count: '{n}' },
+  ko: { title: '가격별 카드', mystery: '가격 없음', count: '{n}장' },
+  en: { title: 'Cards by price', mystery: 'No price', count: '{n}' },
 };
 
 export interface TierBarProps {

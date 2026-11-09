@@ -1,6 +1,6 @@
 // On-device OCR of the card's collector line with tesseract.js. The engine + English data (~4.5 MB from the
 // jsDelivr CDN, cached by the service worker) load lazily into one long-lived worker.
-import type { PSM, Worker as TesseractWorker } from 'tesseract.js';
+import type { LoggerMessage, PSM, Worker as TesseractWorker } from 'tesseract.js';
 import {
   CODE_STRIP,
   contrastStretch,
@@ -15,6 +15,7 @@ import {
   threshold,
   upscaleTo,
   type Pixels,
+  type Rect,
 } from './imageProc';
 import { mergeParses, parsePrintedCode, type ParseOptions, type ParsedCode } from './parseCode';
 import type { ProgressFn } from './types';
@@ -63,35 +64,165 @@ function preparePass(strip: Pixels, pass: CodePass): Pixels {
 
 // ---------- worker lifecycle ----------
 
+/**
+ * A load step (worker script, engine core, language data) that takes longer than this counts as stalled.
+ * tesseract.js reports progress only between steps, so a slow but alive download gets this long per step.
+ */
+const LOAD_STALL_MS = 30_000;
+/** One recognize call on a code strip takes well under a second on desktop and a few on old phones. */
+const PASS_TIMEOUT_MS = 20_000;
+/** How often a waiting scan checks whether it was stopped. */
+const STALE_POLL_MS = 150;
+/**
+ * A scan stopped while the engine has been silent this long is taken as "it's stuck": the load is dropped so
+ * the next scan starts a fresh one instead of queueing behind it until LOAD_STALL_MS.
+ */
+const STOPPED_IDLE_MS = 3_000;
+
+/** tesseract.js load statuses → their share of the 'loading' stage (0..1). */
+const LOAD_STEPS: Record<string, readonly [number, number]> = {
+  'loading tesseract core': [0, 0.45],
+  'initializing tesseract': [0.45, 0.5],
+  'loading language traineddata': [0.5, 0.95],
+  'initializing api': [0.95, 1],
+};
+
 interface Engine {
   worker: Promise<TesseractWorker>;
-  ready: Promise<void>;
+  /** true once the worker is ready, false when loading failed or stalled. Never rejects. */
+  ready: Promise<boolean>;
   warm: boolean;
+  /** Load progress 0..1 so far, and the scans waiting to hear about it. */
+  progress: number;
+  listeners: Set<(progress: number) => void>;
+  /** Date.now() of the last load progress (or the start). */
+  lastProgressAt: number;
+  /** Stop the worker and forget it, so the next scan starts a fresh one. */
+  kill: () => void;
 }
 
 let engine: Engine | undefined;
 
-function getEngine(): Engine {
-  if (!engine) {
-    // Dynamic import keeps tesseract.js out of the main bundle.
-    const worker = import('tesseract.js').then((t) => t.createWorker('eng', t.OEM.LSTM_ONLY));
-    const e: Engine = { worker, warm: false, ready: Promise.resolve() };
-    e.ready = worker.then(
-      () => {
-        e.warm = true;
-      },
-      () => {
-        if (engine === e) engine = undefined; // let the next scan retry a failed download
-      },
-    );
-    engine = e;
+/**
+ * Run `create` while noting the Web Worker it constructs. tesseract.js spawns its worker synchronously but
+ * hands it out only once fully loaded, so without this a stuck load could never be terminated.
+ */
+function withSpawnedWorker<T>(create: () => T): { result: T; spawned?: Worker } {
+  const g = globalThis as { Worker?: typeof Worker };
+  const Native = g.Worker;
+  let spawned: Worker | undefined;
+  try {
+    if (Native) g.Worker = new Proxy(Native, { construct: (target, args) => (spawned = Reflect.construct(target, args)) });
+  } catch {
+    // read-only global: a stuck worker just idles
   }
-  return engine;
+  try {
+    const result = create();
+    return { result, spawned };
+  } finally {
+    if (Native) g.Worker = Native;
+  }
+}
+
+function getEngine(): Engine {
+  if (engine) return engine;
+  let spawned: Worker | undefined;
+  let fail: (reason: unknown) => void = () => undefined;
+  // tesseract.js rejects createWorker only when its first step fails; a failed language download or
+  // initialization goes to errorHandler and leaves the promise pending forever, so race it against that.
+  const failed = new Promise<never>((_, reject) => {
+    fail = reject;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fail(new Error('OCR engine load stalled')), LOAD_STALL_MS);
+    e.lastProgressAt = Date.now();
+  };
+  const e: Engine = {
+    worker: failed,
+    ready: Promise.resolve(false),
+    warm: false,
+    progress: 0,
+    listeners: new Set(),
+    lastProgressAt: Date.now(),
+    kill: () => undefined,
+  };
+  const onLog = (m: LoggerMessage) => {
+    const step = LOAD_STEPS[m.status];
+    if (!step || e.warm) return;
+    arm();
+    e.progress = Math.max(e.progress, step[0] + (step[1] - step[0]) * (m.progress || 0));
+    e.listeners.forEach((l) => l(e.progress));
+  };
+  arm();
+  // Dynamic import keeps tesseract.js out of the main bundle.
+  const created = import('tesseract.js').then((t) => {
+    const made = withSpawnedWorker(() =>
+      t.createWorker('eng', t.OEM.LSTM_ONLY, {
+        // Also called for failed jobs after loading; `fail` is a no-op once the race below settled.
+        errorHandler: (err: unknown) => fail(err),
+        logger: onLog,
+      }),
+    );
+    spawned = made.spawned;
+    return made.result;
+  });
+  created.catch(() => undefined);
+  e.kill = () => {
+    clearTimeout(timer);
+    if (engine === e) engine = undefined;
+    spawned?.terminate();
+    created.then((w) => w.terminate(), () => undefined);
+  };
+  e.worker = Promise.race([created, failed]);
+  e.ready = e.worker.then(
+    () => {
+      clearTimeout(timer);
+      e.warm = true;
+      return true;
+    },
+    () => {
+      e.kill(); // let the next scan retry with a fresh worker and download
+      return false;
+    },
+  );
+  engine = e;
+  return e;
 }
 
 /** Start loading the OCR engine (call when the Scan screen opens). Idempotent; never rejects. */
 export function preloadOcr(): Promise<void> {
-  return getEngine().ready;
+  return getEngine().ready.then(() => undefined);
+}
+
+/** The ready worker, or why there is none. A stopped scan stops waiting within STALE_POLL_MS. */
+async function waitForEngine(
+  onProgress: ProgressFn | undefined,
+  isStale: (() => boolean) | undefined,
+): Promise<{ e: Engine; worker: TesseractWorker } | 'stopped' | 'unavailable'> {
+  const e = getEngine();
+  if (e.warm) return { e, worker: await e.worker };
+  const report = (p: number) => onProgress?.('loading', p);
+  report(e.progress);
+  e.listeners.add(report);
+  let poll: ReturnType<typeof setInterval> | undefined;
+  try {
+    const stopped = new Promise<'stopped'>((resolve) => {
+      if (isStale) poll = setInterval(() => isStale() && resolve('stopped'), STALE_POLL_MS);
+    });
+    const ok = await Promise.race([e.ready, stopped]);
+    if (ok === 'stopped') {
+      if (!e.warm && Date.now() - e.lastProgressAt >= STOPPED_IDLE_MS) e.kill();
+      return 'stopped';
+    }
+    if (!ok) return 'unavailable';
+    report(1);
+    return { e, worker: await e.worker };
+  } finally {
+    clearInterval(poll);
+    e.listeners.delete(report);
+  }
 }
 
 // One worker: interleaving setParameters/recognize from two scans would mix up their page modes.
@@ -109,49 +240,80 @@ export interface CodeStripPass {
   parsed: ParsedCode;
 }
 
+/** 'done': the passes ran (maybe stopped early by shouldStop). 'stopped': isStale said so. 'unavailable': no engine. */
+export type CodeStripStatus = 'done' | 'stopped' | 'unavailable';
+
 export interface CodeStripResult {
   passes: CodeStripPass[];
   merged: ParsedCode;
+  status: CodeStripStatus;
 }
 
 export interface ReadCodeOptions {
-  /** 'loading' while the engine loads (first scan only), then 'reading' i/6 after each pass. */
+  /** 'loading' 0..1 while the engine loads (first scan only), then 'reading' i/n after each pass. */
   onProgress?: ProgressFn;
   /** Checked after every pass with the merged parse so far; return true to skip the remaining passes. */
   shouldStop?: (merged: ParsedCode, parsed: ParsedCode[]) => boolean | Promise<boolean>;
+  /** True once nobody wants this result any more (the kid stopped): checked while waiting and before every pass. */
+  isStale?: () => boolean;
+  /** Run at most this many of CODE_PASSES (the best ones), for cheap extra tries. */
+  maxPasses?: number;
+  /** The part of the card to read, as fractions (default CODE_STRIP). */
+  band?: Rect;
   parse?: ParseOptions;
 }
 
-/** OCR the collector line of a cropped card (63:88) with up to 6 passes. Never throws: failures give empty results. */
-export function readCodeStrip(card: HTMLCanvasElement, opts: ReadCodeOptions = {}): Promise<CodeStripResult> {
-  return serial(() => runPasses(card, opts));
+const empty = (status: CodeStripStatus): CodeStripResult => ({ passes: [], merged: mergeParses([]), status });
+
+/**
+ * OCR the collector line of a cropped card (63:88) with up to 6 passes. Never throws: failures give empty
+ * results, with status 'unavailable' when the engine could not load (or died) and 'stopped' when isStale.
+ */
+export async function readCodeStrip(card: HTMLCanvasElement, opts: ReadCodeOptions = {}): Promise<CodeStripResult> {
+  if (opts.isStale?.()) return empty('stopped');
+  const ready = await waitForEngine(opts.onProgress, opts.isStale);
+  if (typeof ready === 'string') return empty(ready);
+  return serial(() => (opts.isStale?.() ? Promise.resolve(empty('stopped')) : runPasses(ready, card, opts)));
 }
 
-async function runPasses(card: HTMLCanvasElement, { onProgress, shouldStop, parse }: ReadCodeOptions): Promise<CodeStripResult> {
+async function runPasses(
+  { e, worker }: { e: Engine; worker: TesseractWorker },
+  card: HTMLCanvasElement,
+  { onProgress, shouldStop, isStale, maxPasses, band, parse }: ReadCodeOptions,
+): Promise<CodeStripResult> {
   const passes: CodeStripPass[] = [];
   const parsedSoFar = () => passes.map((p) => p.parsed);
+  const todo = CODE_PASSES.slice(0, Math.max(1, maxPasses ?? CODE_PASSES.length));
+  let status: CodeStripStatus = 'done';
   try {
-    const { worker: workerP, warm } = getEngine();
-    if (!warm) onProgress?.('loading', 0);
-    const worker = await workerP;
-    if (!warm) onProgress?.('loading', 1);
-
-    const strip = prepareStrip(readStrip(card));
+    const strip = prepareStrip(readStrip(card, band ?? CODE_STRIP));
     onProgress?.('reading', 0);
-    for (const pass of CODE_PASSES) {
-      const text = await recognize(worker, preparePass(strip, pass), pass);
+    for (const pass of todo) {
+      if (isStale?.()) {
+        status = 'stopped';
+        break;
+      }
+      const text = await recognize(e, worker, preparePass(strip, pass), pass);
+      if (text === null) {
+        status = 'unavailable'; // the worker hung or died: it was reset, the next scan gets a new one
+        break;
+      }
       passes.push({ text, parsed: parsePrintedCode(text, parse) });
-      onProgress?.('reading', passes.length / CODE_PASSES.length);
+      onProgress?.('reading', passes.length / todo.length);
+      if (isStale?.()) {
+        status = 'stopped';
+        break;
+      }
       if (await shouldStop?.(mergeParses(parsedSoFar()), parsedSoFar())) break;
     }
   } catch {
     // OCR is best-effort: the UI falls back to typed search.
   }
-  return { passes, merged: mergeParses(parsedSoFar()) };
+  return { passes, merged: mergeParses(parsedSoFar()), status };
 }
 
-function readStrip(card: HTMLCanvasElement): Pixels {
-  const region = cropRegion(card, CODE_STRIP.x, CODE_STRIP.y, CODE_STRIP.w, CODE_STRIP.h);
+function readStrip(card: HTMLCanvasElement, band: Rect): Pixels {
+  const region = cropRegion(card, band.x, band.y, band.w, band.h);
   const big = upscaleTo(region, STRIP_WIDTH);
   const px = readPixels(big);
   releaseCanvas(region);
@@ -159,19 +321,66 @@ function readStrip(card: HTMLCanvasElement): Pixels {
   return px;
 }
 
-async function recognize(worker: TesseractWorker, img: Pixels, pass: CodePass): Promise<string> {
+/** Words whose box comes this close (px) to the band's top or bottom edge were cut by it. */
+const EDGE_MARGIN = 3;
+
+/**
+ * Text from Tesseract's TSV output without the words touching the top or bottom edge of the strip: a number
+ * cut in half by the band edge reads as another number ("084" → "053") and must not be voted for.
+ * `top`/`bottom` are the strip's rows inside the padded image. Undefined when the TSV is missing or malformed.
+ */
+export function interiorText(tsv: string | null | undefined, top: number, bottom: number): string | undefined {
+  if (!tsv) return undefined;
+  const lines = new Map<string, string[]>();
+  for (const row of tsv.split('\n')) {
+    const f = row.split('\t');
+    // level page block par line word left top width height conf text
+    if (f.length < 12 || f[0] !== '5') continue;
+    const y0 = Number(f[7]);
+    const y1 = y0 + Number(f[9]);
+    const text = f.slice(11).join('\t').trim();
+    if (!text || !Number.isFinite(y0) || !Number.isFinite(y1)) continue;
+    if (y0 <= top + EDGE_MARGIN || y1 >= bottom - EDGE_MARGIN) continue;
+    const key = `${f[2]}.${f[3]}.${f[4]}`;
+    const words = lines.get(key) ?? [];
+    words.push(text);
+    lines.set(key, words);
+  }
+  return [...lines.values()].map((w) => w.join(' ')).join('\n');
+}
+
+/** Resolves undefined after `ms`, and clears its timer when `p` settles first. */
+function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+/** One pass's text; '' when Tesseract failed on it, null when the worker hung (it is then reset). */
+async function recognize(e: Engine, worker: TesseractWorker, img: Pixels, pass: CodePass): Promise<string | null> {
   const canvas = pixelsToCanvas(img);
   try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: pass.psm as PSM,
-      tessedit_char_whitelist: WHITELIST,
-      // Tesseract writes notes like "Estimating resolution as 373" to stderr, which surface as console errors.
-      debug_file: '/dev/null',
-    });
-    const { data } = await worker.recognize(canvas);
-    return data.text;
-  } catch {
-    return '';
+    const job = (async () => {
+      await worker.setParameters({
+        tessedit_pageseg_mode: pass.psm as PSM,
+        tessedit_char_whitelist: WHITELIST,
+        // Tesseract writes notes like "Estimating resolution as 373" to stderr, which surface as console errors.
+        debug_file: '/dev/null',
+      });
+      const { data } = await worker.recognize(canvas, {}, { text: true, tsv: true });
+      return interiorText(data.tsv, QUIET_ZONE, img.height - QUIET_ZONE) ?? data.text;
+    })();
+    const text = await within(
+      job.catch(() => ''),
+      PASS_TIMEOUT_MS,
+    );
+    if (text === undefined) {
+      e.kill();
+      return null;
+    }
+    return text;
   } finally {
     releaseCanvas(canvas);
   }

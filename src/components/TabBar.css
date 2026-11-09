@@ -59,15 +59,16 @@
   color: var(--text);
 }
 
+/* Rises var(--tabbar-lift) above the bar; .screen's bottom padding (--screen-bottom) leaves room for it. */
 .tabbar-scan-btn {
   position: absolute;
-  top: -30px;
+  top: calc(-1 * var(--tabbar-lift));
   left: 50%;
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-left: -32px;
+  width: 60px;
+  height: 60px;
+  margin-left: -30px;
   border-radius: 50%;
   background: var(--grad-primary);
   color: var(--on-primary);

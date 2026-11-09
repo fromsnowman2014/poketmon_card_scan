@@ -27,7 +27,7 @@ type Key =
 
 const STRINGS: Strings<Key> = {
   ko: {
-    title: '카드를 네모 안에 맞춰요',
+    title: '카드를 네모에 꽉 맞춰요',
     close: '닫기',
     torchOn: '플래시 켜기',
     torchOff: '플래시 끄기',
@@ -207,22 +207,25 @@ export function CameraView({ onCapture, onPhoto, onLeave }: CameraViewProps) {
 
         {!failed && (
           <div className="scan-bottom">
-            {showTips && (
-              <ul className="scan-tips fade-in">
-                <li>
-                  <Icon name="sun" size={16} />
-                  {t('tipLight')}
-                </li>
-                <li>
-                  <Icon name="sparkles" size={16} />
-                  {t('tipShine')}
-                </li>
-                <li>
-                  <Icon name="cards" size={16} />
-                  {t('tipFill')}
-                </li>
-              </ul>
-            )}
+            {/* All three tips the first time; afterwards only "fill the box", the one that decides most reads. */}
+            <ul className="scan-tips fade-in">
+              {showTips && (
+                <>
+                  <li>
+                    <Icon name="sun" size={16} />
+                    {t('tipLight')}
+                  </li>
+                  <li>
+                    <Icon name="sparkles" size={16} />
+                    {t('tipShine')}
+                  </li>
+                </>
+              )}
+              <li>
+                <Icon name="cards" size={16} />
+                {t('tipFill')}
+              </li>
+            </ul>
             <div className="scan-controls">
               {sideButton('image', t('photos'), () => photos.current?.click())}
               <button

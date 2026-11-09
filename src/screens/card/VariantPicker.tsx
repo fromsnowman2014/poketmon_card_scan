@@ -3,8 +3,8 @@ import type { CardVariant } from '../../lib/types';
 import { variantLabel } from './format';
 
 const STRINGS: Strings<'group' | 'help' | 'noPrice'> = {
-  ko: { group: '카드 종류', help: '반짝이는 무늬가 다르면 바꿔 보세요', noPrice: '가격 없음' },
-  en: { group: 'Card version', help: 'Pick the shiny pattern that matches your card', noPrice: 'No price' },
+  ko: { group: '카드 종류', help: '내 카드와 같은 반짝이 무늬를 고르면 위 가격이 바뀌어요', noPrice: '가격 없음' },
+  en: { group: 'Card version', help: 'Pick the shiny pattern that matches your card to update the price', noPrice: 'No price' },
 };
 
 export interface VariantPickerProps {

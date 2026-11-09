@@ -3,9 +3,13 @@ main = "src/index.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-# "*" works everywhere. To allow only your app: "https://<github-user>.github.io" (comma-separate several).
+# Which WEBSITES may use the worker. "*" works everywhere. To allow only your app:
+# "https://<github-user>.github.io" (comma-separate several, e.g. also "https://<project>.pages.dev").
+# This only stops other websites in a browser; scripts (curl) ignore it, so keep the worker address private.
 ALLOWED_ORIGIN = "*"
 MARKETPLACE = "EBAY_US"
+# /ebay requests per minute per IP address (cached answers count too). A kid never gets close to 30.
+RATE_LIMIT_PER_MIN = 30
 # Secrets are NOT stored here. Set them with:
-#   npx wrangler secret put EBAY_CLIENT_ID
-#   npx wrangler secret put EBAY_CLIENT_SECRET
+#   npx wrangler@4 secret put EBAY_CLIENT_ID
+#   npx wrangler@4 secret put EBAY_CLIENT_SECRET

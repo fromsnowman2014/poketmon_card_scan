@@ -109,14 +109,8 @@ function ResultCard({ card, routeLang }: { card: CardBrief; routeLang: CardLang 
     <li>
       <Link to={`/card/${lang}/${encodeURIComponent(card.id)}`} className="search-card">
         <span className="search-card-art">
-          <CardImage image={card.image} alt={card.name} size="thumb" />
-          {/* Newer JA sets have no pictures yet: print the code so look-alike card backs can be told apart. */}
-          {!card.image && (
-            <span className="search-card-code" aria-hidden="true">
-              {card.setId}
-              <b>{card.localId}</b>
-            </span>
-          )}
+          {/* Newer JA sets have no pictures yet (and a few images fail): the card back shows the code instead. */}
+          <CardImage image={card.image} alt={card.name} size="thumb" code={{ set: card.setId, number: card.localId }} />
         </span>
         <span className="search-card-text">
           <span className="search-card-name truncate">{card.name}</span>

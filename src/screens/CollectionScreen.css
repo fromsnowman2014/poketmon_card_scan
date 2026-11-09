@@ -8,6 +8,8 @@
 
 .collection-hero {
   position: relative;
+  /* Lets the total shrink to the card's width (see .collection-total). */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -29,8 +31,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 52px, smaller for a long won total so it never runs past the card edge ("₩12,345,600"); Money sets --money-chars. */
 .collection-total {
   margin-top: -2px;
+  font-size: clamp(34px, 11vw, var(--fs-price-xl));
+  font-size: clamp(30px, 100cqi / (var(--money-chars, 8) * 0.64), var(--fs-price-xl));
 }
 
 .collection-change {
@@ -131,8 +136,13 @@
   overflow: hidden;
 }
 
+.collection-best > .grow {
+  container-type: inline-size;
+}
+
 .collection-best-price {
-  font-size: 26px;
+  font-size: clamp(18px, 6vw, 26px);
+  font-size: clamp(18px, 100cqi / (var(--money-chars, 8) * 0.64), 26px);
   font-weight: 800;
   letter-spacing: -0.02em;
   line-height: 1.15;
@@ -263,6 +273,7 @@
 }
 
 .collection-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -345,13 +356,14 @@ a.collection-card:active .collection-art {
 .collection-edit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
 }
 
+/* Full-width pill: − at the left edge, the count in the middle, + at the right edge. */
 .collection-stepper {
   display: flex;
+  flex: 1;
   align-items: center;
+  justify-content: space-between;
   gap: 2px;
   padding: 2px;
   border-radius: var(--radius-pill);
@@ -370,9 +382,23 @@ a.collection-card:active .collection-art {
   background: var(--surface);
 }
 
+/* Round delete badge on the card's top-left corner in edit mode; 36px to look at, 44px to tap. */
 .collection-remove {
-  background: var(--down-soft);
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  background: var(--surface);
   color: var(--down);
+  box-shadow: 0 0 0 1.5px var(--down), 0 6px 16px -6px #000000aa;
+}
+
+.collection-remove::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
 }
 
 .collection-danger {

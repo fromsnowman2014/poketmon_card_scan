@@ -93,29 +93,3 @@
   position: relative;
   display: block;
 }
-
-.search-card-code {
-  position: absolute;
-  left: 50%;
-  bottom: 12%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 88%;
-  padding: 3px 10px 4px;
-  border-radius: var(--radius-sm);
-  background: #0b163399; /* on the card-back art, same in both themes */
-  color: #e0f2fe;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.search-card-code b {
-  font-size: 15px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}

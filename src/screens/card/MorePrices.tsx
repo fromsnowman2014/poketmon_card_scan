@@ -1,3 +1,4 @@
+import { ExternalLink } from '../../components/ExternalLink';
 import { Icon } from '../../components/Icon';
 import { useStrings, type Strings } from '../../lib/i18n';
 import { formatMoney } from '../../lib/pricing';
@@ -17,7 +18,9 @@ type Key =
   | 'avg7'
   | 'avg30'
   | 'ignored'
-  | 'openTcgplayer';
+  | 'openTcgplayer'
+  | 'ebayQuery'
+  | 'workerHint';
 
 const STRINGS: Strings<Key> = {
   ko: {
@@ -35,6 +38,8 @@ const STRINGS: Strings<Key> = {
     avg30: '30일 평균',
     ignored: '너무 높아서 뺐어요',
     openTcgplayer: 'TCGplayer에서 보기',
+    ebayQuery: 'eBay 검색어: {q}',
+    workerHint: '부모님이 설정에서 eBay 실시간 가격을 켤 수 있어요.',
   },
   en: {
     title: 'More prices',
@@ -51,6 +56,8 @@ const STRINGS: Strings<Key> = {
     avg30: '30-day avg',
     ignored: 'Ignored: too high',
     openTcgplayer: 'Open on TCGplayer',
+    ebayQuery: 'eBay search words: {q}',
+    workerHint: 'A grown\u2011up can turn on live eBay prices in Settings.',
   },
 };
 
@@ -81,13 +88,17 @@ export interface MorePricesProps {
   variant: CardVariant;
   /** Name of the selected variant, shown when the card has several. */
   variantName?: string;
+  /** The words the eBay links search for (for grown-ups checking the results). */
+  ebayQuery?: string;
+  /** Tell grown-ups that live eBay prices can be turned on in Settings (no worker set up). */
+  workerHint?: boolean;
 }
 
-/** Raw source numbers for grown-ups: TCGplayer (USD) and Cardmarket (EUR), unconverted. */
-export function MorePrices({ variant, variantName }: MorePricesProps) {
+/** Raw source numbers for grown-ups: TCGplayer (USD) and Cardmarket (EUR), unconverted, plus eBay details. */
+export function MorePrices({ variant, variantName, ebayQuery, workerHint }: MorePricesProps) {
   const t = useStrings(STRINGS);
   const { tcgplayer: tcg, cardmarket: cm, tcgplayerId, summary } = variant;
-  if (!tcg && !cm && !tcgplayerId) return null;
+  if (!tcg && !cm && !tcgplayerId && !ebayQuery && !workerHint) return null;
   // TCGplayer's raw high is often a 999 placeholder listing that the headline range leaves out.
   const highIgnored = summary?.source === 'tcgplayer' && tcg?.high != null && summary.high !== tcg.high;
 
@@ -115,15 +126,14 @@ export function MorePrices({ variant, variantName }: MorePricesProps) {
               />
             )}
             {tcgplayerId && (
-              <a
+              <ExternalLink
+                site="TCGplayer"
                 className="btn btn-secondary btn-block"
                 href={`https://www.tcgplayer.com/product/${tcgplayerId}`}
-                target="_blank"
-                rel="noopener"
               >
                 {t('openTcgplayer')}
                 <Icon name="external-link" size={18} />
-              </a>
+              </ExternalLink>
             )}
           </div>
         )}
@@ -141,6 +151,12 @@ export function MorePrices({ variant, variantName }: MorePricesProps) {
                 [t('avg30'), eur(cm.avg30)],
               ]}
             />
+          </div>
+        )}
+        {(ebayQuery || workerHint) && (
+          <div className="stack-4 card-more-ebay">
+            {ebayQuery && <p className="caption muted">{t('ebayQuery', { q: ebayQuery })}</p>}
+            {workerHint && <p className="caption muted">{t('workerHint')}</p>}
           </div>
         )}
       </div>

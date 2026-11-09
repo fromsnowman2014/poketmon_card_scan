@@ -172,28 +172,34 @@
   50% { box-shadow: 0 0 22px 2px #fde04766; }
 }
 
+/* Beside the zone, pointing at it: above the zone is exactly where the number shows up when the card is held
+   a little small, and the bubble must never hide it. The right side of the card's bottom edge holds no number. */
 .scan-code-label {
   position: absolute;
-  left: -2px;
-  bottom: calc(100% + 9px);
-  padding: 4px 11px;
-  border-radius: var(--radius-pill);
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 76%; /* of the zone: stays inside the frame, wraps on narrow screens */
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
   background: var(--scan-mark);
   color: #1f1500;
   font-size: var(--fs-caption);
   font-weight: 800;
-  line-height: 1.3;
-  white-space: nowrap;
+  line-height: 1.25;
+  text-align: center;
   box-shadow: 0 4px 12px -4px #000000aa;
 }
 
 .scan-code-label::after {
   content: "";
   position: absolute;
-  left: 16px;
-  top: 100%;
+  right: 100%;
+  top: 50%;
+  margin-top: -6px;
   border: 6px solid transparent;
-  border-top-color: var(--scan-mark);
+  border-right-color: var(--scan-mark);
 }
 
 .scan-starting {
@@ -301,9 +307,11 @@
 
 .scan-tips {
   display: flex;
-  flex-wrap: wrap;
+  /* One row: a second row would rise into the guide frame (the bottom panel has a fixed height). */
+  flex-wrap: nowrap;
   justify-content: center;
   gap: 6px;
+  max-width: 100%;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -323,7 +331,14 @@
 }
 
 .scan-tips .icon {
+  flex: none;
   color: var(--scan-guide);
+}
+
+@media (max-width: 380px) {
+  .scan-tips { gap: 4px; }
+  .scan-tips li { gap: 3px; padding: 4px 8px; font-size: 12px; }
+  .scan-tips .icon { width: 14px; height: 14px; }
 }
 
 .scan-controls {
@@ -439,6 +454,22 @@
   width: 52px;
   height: 52px;
   flex: none;
+}
+
+.scan-adjust-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.scan-adjust-extra .scan-pill {
+  padding-inline: 16px;
+}
+
+.scan-adjust-extra .scan-pill .icon {
+  color: var(--scan-guide);
 }
 
 /* ---------- Camera fallback ---------- */
@@ -560,25 +591,6 @@
 
 .scan-cand:active .scan-cand-art { transform: scale(0.96); }
 
-.scan-cand-code {
-  position: absolute;
-  left: 50%;
-  bottom: 12%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  max-width: 88%;
-  padding: 3px 10px 4px;
-  border-radius: var(--radius-sm);
-  background: #0b163399; /* on the card-back art, same in both themes */
-  color: #e0f2fe;
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
 .scan-cand-name {
   display: block;
   font-size: var(--fs-small);
@@ -676,6 +688,18 @@
   background: var(--down-soft);
   color: var(--down);
   font-weight: 600;
+}
+
+/* "Type the number first": a nudge, not an error. */
+.scan-form-tip {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+/* Examples, clearly lighter than a typed value, so empty fields never look filled in. */
+.scan-code-form .input::placeholder {
+  opacity: 0.45;
+  font-weight: 400;
 }
 
 .scan-btn-spinner {

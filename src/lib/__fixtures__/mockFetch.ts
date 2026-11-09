@@ -1,26 +1,52 @@
 // Test helper: a fetch stub routing URLs to real API responses saved in this folder (curl, 2026-11-08).
 import { vi } from 'vitest';
 import enBase14 from './en-base1-4.json';
+import enBase158 from './en-base1-58.json';
+import enGym12 from './en-gym1-2.json';
 import enCharizardEx from './en-list-name-charizard-ex.json';
 import enSets from './en-sets-graphql.json';
+import enSv01189 from './en-sv01-189.json';
 import enSv035199 from './en-sv03.5-199.json';
+import enSv04028 from './en-sv04-028.json';
+import enSv05021 from './en-sv05-021.json';
 import enSv085084 from './en-sv08.5-084.json';
+import enSvp085 from './en-svp-085.json';
+import enSwsh125ggGG35 from './en-swsh12.5gg-GG35.json';
+import enSwsh7215 from './en-swsh7-215.json';
+import enSwsh9tgTG05 from './en-swsh9tg-TG05.json';
+import enSwshpSWSH284 from './en-swshp-SWSH284.json';
 import jaList187084 from './ja-list-187-084.json';
 import jaHawlucha from './ja-list-name-hawlucha.json';
 import jaSets from './ja-sets-graphql.json';
+import jaSvP085 from './ja-SV-P-085.json';
+import jaSv8a001 from './ja-SV8a-001.json';
 import jaSv8a084 from './ja-SV8a-084.json';
 
-export const fixtures = { enBase14, enSv035199, enSv085084, jaSv8a084 };
+export const fixtures = {
+  enBase14,
+  enBase158,
+  enGym12,
+  enSv01189,
+  enSv035199,
+  enSv04028,
+  enSv05021,
+  enSv085084,
+  enSvp085,
+  enSwsh125ggGG35,
+  enSwsh7215,
+  enSwsh9tgTG05,
+  enSwshpSWSH284,
+  jaSv8a001,
+  jaSv8a084,
+  jaSvP085,
+};
 
 /** What a route returns: JSON body (200), a Response as-is, or undefined for a TCGdex-style 404. */
 export type Handler = (url: URL, body: string | undefined) => unknown;
 
-const CARDS: Record<string, unknown> = {
-  'ja/sv8a-084': jaSv8a084,
-  'en/sv08.5-084': enSv085084,
-  'en/sv03.5-199': enSv035199,
-  'en/base1-4': enBase14,
-};
+const CARDS: Record<string, unknown> = Object.fromEntries(
+  Object.values(fixtures).map((c) => [`${/^[A-Z]/.test(c.id) ? 'ja' : 'en'}/${c.id.toLowerCase()}`, c]),
+);
 
 const LISTS: Record<string, unknown> = {
   'ja?set.cardCount.official=187&localId=084': jaList187084,

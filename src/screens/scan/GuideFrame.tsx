@@ -3,8 +3,8 @@ import { cx } from '../../components/cx';
 import { useStrings, type Strings } from '../../lib/i18n';
 
 const STRINGS: Strings<'codeHint'> = {
-  ko: { codeHint: '여기 번호가 보이게' },
-  en: { codeHint: 'Show this number' },
+  ko: { codeHint: '번호는 여기에' },
+  en: { codeHint: 'Number here' },
 };
 
 export interface GuideFrameProps {

@@ -39,11 +39,17 @@ export function RecentCards({ items }: { items: HistoryItem[] }) {
           return (
             <li key={`${item.lang}:${item.id}`}>
               <Link to={`/card/${item.lang}/${encodeURIComponent(item.id)}`} className="home-recent-item">
-                <CardImage image={item.image} fallback={item.imageFallback} alt={name} size="thumb" />
+                <CardImage
+                  image={item.image}
+                  fallback={item.imageFallback}
+                  alt={name}
+                  size="thumb"
+                  code={{ set: item.setId, number: item.localId }}
+                />
                 <span className="home-recent-name truncate">{name}</span>
                 <span className="home-recent-price">
                   {item.priceUsd !== null && <span className={`tier-dot tier-${valueTier(item.priceUsd)}`} />}
-                  <Money usd={item.priceUsd} />
+                  <Money usd={item.priceUsd} approx={item.priceApprox} />
                 </span>
               </Link>
             </li>

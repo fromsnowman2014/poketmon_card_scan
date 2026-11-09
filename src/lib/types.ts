@@ -54,7 +54,11 @@ export interface PriceSummary {
   low: number | null;
   /** Highest (sanity-filtered) price. */
   high: number | null;
-  /** Recent change in percent (e.g. +12.5 means up 12.5% vs 30-day average). null if unknown. */
+  /**
+   * Recent change in percent (e.g. +12.5 means up 12.5% vs 30-day average). null if unknown or not meaningful:
+   * cards under $2, Cardmarket avg30 under €1, moves under 10% or over 100%, or a TCGplayer headline that
+   * Cardmarket prices very differently. Non-null values are always real moves worth a badge.
+   */
   changePct: number | null;
   /** Where the headline number came from. */
   source: 'tcgplayer' | 'cardmarket';
@@ -72,6 +76,12 @@ export interface CardVariant {
   type: string;
   /** Optional foil sub-type, e.g. "masterball", "pokeball". */
   foil?: string;
+  /** Stamps printed on this variant as TCGdex names them, e.g. ["1st-edition"], ["gamestop"], ["pre-release"]. */
+  stamp?: string[];
+  /** TCGdex printing sub-type, e.g. "shadowless", "1999-2000-copyright" ("unlimited" is the regular printing). */
+  subtype?: string;
+  /** Card size when not standard, e.g. "jumbo". */
+  size?: string;
   tcgplayer?: TcgplayerPrice | null;
   cardmarket?: CardmarketPrice | null;
   /** Display summary computed from the above (USD). null when no price data exists. */
@@ -87,6 +97,12 @@ export interface CardDetail extends CardBrief {
   setName: string;
   /** Official set size printed after the slash, e.g. 187. */
   setOfficialCount?: number;
+  /**
+   * Card number exactly as printed on the card, for display chips and eBay queries, e.g.
+   * "084/187", "TG05/TG30", "GG35/GG70", "SWSH284", "085" (EN SVP promo), "085/SV-P" (JA promo).
+   * Undefined when unknown: fall back to localId.
+   */
+  printedNumber?: string;
   setReleaseDate?: string;
   rarity?: string;
   hp?: number;
@@ -150,7 +166,12 @@ export interface EbaySummary {
   query: string;
   fetchedAt: string;
   auctions: { count: number; items: EbayListing[] };
-  buyNow: { count: number; lowest: number | null; median: number | null; items: EbayListing[] };
+  /**
+   * Buy It Now listings. `lowest` and `median` are TOTAL costs (price + shipping) in USD, so a
+   * 99¢ card with $4.99 shipping counts as $5.98. `lowestShipping` is the shipping part of the
+   * lowest listing (0 = free shipping, null = unknown).
+   */
+  buyNow: { count: number; lowest: number | null; median: number | null; lowestShipping?: number | null; items: EbayListing[] };
   searchUrl: string;
   soldUrl?: string;
 }
@@ -170,6 +191,8 @@ export interface CollectionItem {
   qty: number;
   /** Last known market price in USD (per card). */
   priceUsd: number | null;
+  /** True when priceUsd was converted from EUR (Cardmarket, PriceSummary.converted): show it with "≈". */
+  priceApprox?: boolean;
   /** Price at the time it was first added (to show gain/loss). */
   firstPriceUsd: number | null;
   priceUpdatedAt: string;
@@ -182,6 +205,8 @@ export interface CollectionItem {
 /** A recently viewed card (home screen history). */
 export interface HistoryItem extends CardBrief {
   priceUsd: number | null;
+  /** True when priceUsd was converted from EUR (PriceSummary.converted): show it with "≈". */
+  priceApprox?: boolean;
   viewedAt: string;
   /** For showing the name in the UI language (names.translateCardName). */
   dexIds?: number[];
@@ -203,6 +228,12 @@ export interface ValueSnapshot {
   /** YYYY-MM-DD (local date) */
   date: string;
   totalUsd: number;
+  /**
+   * Saved cards that day: collection key → [price per card in USD, quantity]; unpriced cards are left out.
+   * "Since last week" compares only cards present in both snapshots, so adding a card is never a price rise.
+   * Missing on snapshots from before this field existed, and dropped from old snapshots that can no longer be a baseline.
+   */
+  cards?: Record<string, [usd: number, qty: number]>;
 }
 
 /** Fun price tiers for kids. */

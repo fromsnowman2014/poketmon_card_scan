@@ -2,13 +2,14 @@ import { Icon } from '../../components/Icon';
 import { useStrings, type Strings } from '../../lib/i18n';
 import { CODE_PASSES } from '../../lib/ocr';
 import { GuideFrame } from './GuideFrame';
-import type { Stage } from './scanCard';
+import type { Look, Stage } from './scanCard';
 
-const STRINGS: Strings<'loading' | 'reading' | 'again' | 'matching' | 'hint' | 'stop'> = {
+const STRINGS: Strings<'loading' | 'reading' | 'again' | 'turn' | 'matching' | 'hint' | 'stop'> = {
   ko: {
     loading: '준비 중…',
     reading: '카드 읽는 중… ({n}/{total})',
     again: '한 번 더 자세히 볼게요…',
+    turn: '카드를 돌려서 볼게요…',
     matching: '카드 찾는 중…',
     hint: '아래쪽 작은 번호를 읽고 있어요',
     stop: '그만하고 다시 찍기',
@@ -17,6 +18,7 @@ const STRINGS: Strings<'loading' | 'reading' | 'again' | 'matching' | 'hint' | '
     loading: 'Getting ready…',
     reading: 'Reading your card… ({n}/{total})',
     again: 'Taking a closer look…',
+    turn: 'Turning the photo…',
     matching: 'Finding your card…',
     hint: 'Reading the small number at the bottom',
     stop: 'Stop and scan again',
@@ -38,8 +40,8 @@ export interface AnalyzingProps {
   photo: string;
   stage: Stage;
   progress: number;
-  /** 2 while taking a second look at a resampled copy (the first read was not sure). */
-  look: 1 | 2;
+  /** 'turn' while reading the photo turned sideways, 2 for the second look at a resampled copy. */
+  look: Look;
   onStop: () => void;
 }
 
@@ -52,9 +54,11 @@ export function Analyzing({ photo, stage, progress, look, onStop }: AnalyzingPro
       ? t('matching')
       : look === 2
         ? t('again')
-        : stage === 'reading'
-          ? t('reading', { n: pass, total: PASSES })
-          : t('loading');
+        : look === 'turn'
+          ? t('turn')
+          : stage === 'reading'
+            ? t('reading', { n: pass, total: PASSES })
+            : t('loading');
 
   return (
     <div className="scan-stage">

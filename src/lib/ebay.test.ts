@@ -35,8 +35,42 @@ describe('ebayQuery', () => {
     expect(ebayQuery({ ...hawlucha, name: 'ブラッキーex', dexIds: [197], localId: '217' })).toBe('Umbreon ex sv8a 217/187 Japanese');
   });
 
-  it('uses "pokemon" for Japanese trainer cards without a Pokédex number', () => {
-    expect(ebayQuery({ ...hawlucha, name: 'ナンジャモ', dexIds: [], localId: '232' })).toBe('pokemon sv8a 232/187 Japanese');
+  it('Japanese trainer cards (no Pokédex number) go by their printed code alone', () => {
+    expect(ebayQuery({ ...hawlucha, name: 'ナンジャモ', dexIds: [], localId: '232' })).toBe('sv8a 232/187 Japanese');
+    expect(ebayQuery({ ...hawlucha, lang: 'ko', name: 'ナンジャモ', dexIds: [], localId: '232', printedNumber: '232/187' })).toBe(
+      'sv8a 232/187 Korean',
+    );
+    // A JA promo trainer/energy: "085/SV-P" is just as specific.
+    expect(ebayQuery({ ...hawlucha, name: '基本悪エネルギー', dexIds: [], setId: 'SV-P', localId: '085', setOfficialCount: undefined, printedNumber: '085/SV-P' })).toBe(
+      '085/SV-P Japanese',
+    );
+  });
+
+  it('keeps "pokemon" only as a last resort, when neither a name nor a full code is known', () => {
+    expect(ebayQuery({ ...hawlucha, name: 'ナンジャモ', dexIds: [], localId: '232', setOfficialCount: undefined })).toBe('pokemon sv8a 232 Japanese');
+  });
+
+  it('uses the printed number when known', () => {
+    expect(ebayQuery({ ...lopunny, printedNumber: '084/131' })).toBe('Lopunny 084/131 Prismatic Evolutions');
+    expect(ebayQuery({ ...hawlucha, printedNumber: '084/187' })).toBe('Hawlucha sv8a 084/187 Japanese');
+  });
+
+  it('EN promos: number + "promo", or the prefixed number alone; never the TCGdex "Black Star Promos" name', () => {
+    const promo: EbayCard = { name: 'Pikachu with Grey Felt Hat', lang: 'en', localId: '085', setId: 'svp', dexIds: [25], setName: 'SVP Black Star Promos', printedNumber: '085' };
+    expect(ebayQuery(promo)).toBe('Pikachu with Grey Felt Hat 085 promo');
+    const swshp = { ...promo, name: 'Galarian Moltres', localId: 'SWSH284', setId: 'swshp', setName: 'SWSH Black Star Promos', printedNumber: 'SWSH284' };
+    expect(ebayQuery(swshp)).toBe('Galarian Moltres SWSH284');
+    expect(ebayQuery({ ...swshp, name: 'Charizard GX', localId: 'SM60', setId: 'smp', setName: 'SM Black Star Promos', printedNumber: 'SM60' })).toBe(
+      'Charizard GX SM60',
+    );
+  });
+
+  it('EN subsets: lettered number/total and the parent set name', () => {
+    const tg: EbayCard = { name: 'Zekrom', lang: 'en', localId: 'TG05', setId: 'swsh9tg', dexIds: [644], setName: 'Brilliant Stars Trainer Gallery', setOfficialCount: 30, printedNumber: 'TG05/TG30' };
+    expect(ebayQuery(tg)).toBe('Zekrom TG05/TG30 Brilliant Stars');
+    expect(ebayQuery({ ...tg, name: 'Leafeon VSTAR', localId: 'GG35', setId: 'swsh12.5gg', setName: 'Crown Zenith Galarian Gallery', setOfficialCount: 70, printedNumber: 'GG35/GG70' })).toBe(
+      'Leafeon VSTAR GG35/GG70 Crown Zenith',
+    );
   });
 
   it('falls back to the species name when the card name does not contain it', () => {
@@ -127,7 +161,15 @@ describe('fetchEbaySummary', () => {
     expect(out.buyNow.lowest).toBe(0.99);
     expect(out.auctions.items[0]).toMatchObject({ title: 'Hawlucha 084/187 sv8a Japanese', price: 2.5, bidCount: 3 });
     expect(out.buyNow.items[0]).toMatchObject({ shipping: 1.25, condition: null, image: undefined });
+    expect(out.buyNow).not.toHaveProperty('lowestShipping'); // older workers don't send it
     expect(out.soldUrl).toBe(summary.soldUrl);
+  });
+
+  it('passes the shipping part of the lowest Buy It Now total through', async () => {
+    stubFetch(async () => jsonResponse({ ...summary, buyNow: { ...summary.buyNow, lowest: 2.24, lowestShipping: 1.25 } }));
+    expect((await fetchEbaySummary('https://w.example', 'q')).buyNow).toMatchObject({ lowest: 2.24, lowestShipping: 1.25 });
+    stubFetch(async () => jsonResponse({ ...summary, buyNow: { ...summary.buyNow, lowestShipping: 'free' } }));
+    expect((await fetchEbaySummary('https://w.example', 'q')).buyNow.lowestShipping).toBeNull();
   });
 
   it('accepts a pasted URL without scheme or with the /ebay path', async () => {

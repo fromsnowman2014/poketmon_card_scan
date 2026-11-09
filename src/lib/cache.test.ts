@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cached, clearCache, fetchJson, HttpError, peekCached } from './cache';
+import { cached, clearCache, fetchJson, HttpError, peekCached, pruneExpiredCache, writeWithRoom } from './cache';
 
 /** Minimal Storage backed by a Map; `full` makes setItem throw like a quota error. */
 function fakeStorage() {
@@ -104,6 +104,53 @@ describe('cached', () => {
     expect(peekCached('fx:a')).toBeUndefined();
     expect(peekCached('card:b')).toBe(2);
     expect([...store.data.keys()]).toEqual(['cc:cache:card:b']);
+  });
+});
+
+describe('pruning and making room', () => {
+  it('pruneExpiredCache drops expired entries but keeps "last known" ones', async () => {
+    vi.useFakeTimers();
+    const store = fakeStorage();
+    vi.stubGlobal('localStorage', store);
+    store.setItem('cc:settings', '{"v":1}');
+    await cached('card:old', 10, async () => 1);
+    await cached('fx:usd', 10, async () => 2, { keep: true });
+    await cached('card:new', 1000, async () => 3);
+    vi.advanceTimersByTime(20);
+    expect(pruneExpiredCache()).toBe(1);
+    expect([...store.data.keys()].sort()).toEqual(['cc:cache:card:new', 'cc:cache:fx:usd', 'cc:settings']);
+    expect(peekCached('fx:usd')).toBe(2);
+  });
+
+  it('writeWithRoom evicts expired, then the oldest cache entries until the write fits', async () => {
+    vi.useFakeTimers();
+    const store = fakeStorage();
+    vi.stubGlobal('localStorage', store);
+    for (let i = 0; i < 8; i++) {
+      await cached(`card:${i}`, 60_000 + i * 1000, async () => i);
+    }
+    await cached('fx:usd', 1, async () => 'rates', { keep: true });
+    vi.advanceTimersByTime(10);
+    const setItem = store.setItem;
+    // Full until at least 3 cache entries are gone.
+    store.setItem = (k, v) => {
+      if (k === 'cc:collection' && [...store.data.keys()].filter((x) => x.startsWith('cc:cache:')).length > 6) {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      setItem(k, v);
+    };
+    expect(writeWithRoom(() => store.setItem('cc:collection', '[]'))).toBe(true);
+    const left = [...store.data.keys()];
+    expect(left).toContain('cc:collection');
+    expect(left).toContain('cc:cache:fx:usd'); // kept although expired
+    expect(left.filter((k) => k.startsWith('cc:cache:card:'))).toEqual(['cc:cache:card:4', 'cc:cache:card:5', 'cc:cache:card:6', 'cc:cache:card:7']);
+  });
+
+  it('writeWithRoom gives up (false) when even an empty cache does not help', () => {
+    const store = fakeStorage();
+    store.full = true;
+    vi.stubGlobal('localStorage', store);
+    expect(writeWithRoom(() => store.setItem('cc:collection', '[]'))).toBe(false);
   });
 });
 

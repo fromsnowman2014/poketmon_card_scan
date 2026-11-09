@@ -6,16 +6,18 @@ import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { Sheet } from '../components/Sheet';
 import { TopBar } from '../components/TopBar';
+import { ebayQuery } from '../lib/ebay';
+import { useRates } from '../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
-import { valueTier } from '../lib/pricing';
+import { applyRates, valueTier } from '../lib/pricing';
 import { Link, useRoute } from '../lib/router';
-import { getScanPhoto, pushHistory } from '../lib/store';
+import { getScanPhoto, pushHistory, updateCollectionPrice, useCollection, useSettings } from '../lib/store';
 import { splitCardId } from '../lib/tcgdex';
 import type { CardDetail, CardLang, ValueTier } from '../lib/types';
 import { CardSkeleton } from './card/CardSkeleton';
 import { CollectButton } from './card/CollectButton';
 import { EbayPanel } from './card/EbayPanel';
-import { cardNames, speciesIds, variantLabel } from './card/format';
+import { cardNames, printedNumberOf, rarityLabel, speciesIds, variantLabel } from './card/format';
 import { MorePrices } from './card/MorePrices';
 import { PriceHero } from './card/PriceHero';
 import { useCardDetail } from './card/useCardDetail';
@@ -35,7 +37,8 @@ type Key =
   | 'errorTitle'
   | 'errorText'
   | 'retry'
-  | 'disclaimer';
+  | 'disclaimer'
+  | CardLang;
 
 const STRINGS: Strings<Key> = {
   ko: {
@@ -51,7 +54,10 @@ const STRINGS: Strings<Key> = {
     errorTitle: '앗, 카드를 못 불러왔어요',
     errorText: '잠깐 뒤에 다시 해 볼까요?',
     retry: '다시 해 보기',
-    disclaimer: '가격은 예상이에요. 사고팔 땐 꼭 어른과 함께!',
+    disclaimer: '가격은 예상이에요. 사고팔 땐 어른과 함께!',
+    ja: '일본판',
+    en: '영문판',
+    ko: '한글판',
   },
   en: {
     wrong: 'Not this card?',
@@ -66,11 +72,14 @@ const STRINGS: Strings<Key> = {
     errorTitle: "Oops, the card didn't load",
     errorText: "Let's try again in a moment.",
     retry: 'Try again',
-    disclaimer: 'Prices are estimates. Ask a grown\u2011up before buying or selling.',
+    disclaimer: 'Prices are guesses. Ask a grown\u2011up before buying or selling.',
+    ja: 'Japanese',
+    en: 'English',
+    ko: 'Korean',
   },
 };
 
-const LANG_CHIPS: Record<CardLang, string> = { ja: '🇯🇵 日本語', en: '🇺🇸 EN', ko: '🇰🇷 한국어' };
+const LANG_FLAGS: Record<CardLang, string> = { ja: '🇯🇵', en: '🇺🇸', ko: '🇰🇷' };
 const CELEBRATE: ReadonlySet<ValueTier> = new Set(['rare', 'super', 'treasure']);
 
 export interface CardScreenProps {
@@ -82,6 +91,20 @@ function priceOf(card: CardDetail, variantKey: string): number | null {
   return card.variants.find((v) => v.key === variantKey)?.summary?.market ?? null;
 }
 
+/** Saved copies of this card take the prices just loaded, so My Cards doesn't wait for its daily refresh. */
+function useSyncSavedPrices(card: CardDetail): void {
+  const items = useCollection();
+  useEffect(() => {
+    for (const item of items) {
+      if (item.lang !== card.lang || item.id !== card.id) continue;
+      const summary = card.variants.find((v) => v.key === item.variant)?.summary;
+      if (!summary || summary.market === null) continue;
+      if (summary.market === item.priceUsd && summary.converted === !!item.priceApprox) continue;
+      updateCollectionPrice(item.key, summary.market, summary.converted);
+    }
+  }, [card, items]);
+}
+
 interface CardResultProps {
   card: CardDetail;
   /** Route language: 'ko' for Korean cards even though their data is Japanese. */
@@ -90,9 +113,14 @@ interface CardResultProps {
   fromScan: boolean;
 }
 
-function CardResult({ card, lang, photo, fromScan }: CardResultProps) {
+function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
   const t = useStrings(STRINGS);
   const uiLang = useUiLang();
+  const { ebayWorkerUrl } = useSettings();
+  const rates = useRates();
+  // getCard converts EUR prices with the rates it had at hand (maybe last week's or the built-in ones); redo it
+  // when live rates arrive so the price, the saved copy and the history all use the same numbers.
+  const card = useMemo(() => applyRates(fetched, rates), [fetched, rates]);
   const [variantKey, setVariantKey] = useState(card.defaultVariant);
   const [zoomed, setZoomed] = useState(false);
   // Decided once on arrival: switching variants later shouldn't throw confetti again.
@@ -102,23 +130,33 @@ function CardResult({ card, lang, photo, fromScan }: CardResultProps) {
   });
 
   useEffect(() => {
-    pushHistory(card, priceOf(card, card.defaultVariant));
+    const summary = card.variants.find((v) => v.key === card.defaultVariant)?.summary;
+    pushHistory(card, summary?.market ?? null, !!summary?.converted);
   }, [card]);
+  useSyncSavedPrices(card);
 
   const variant = card.variants.find((v) => v.key === variantKey) ?? card.variants[0];
   const market = variant.summary?.market ?? null;
   const tier = market === null ? null : valueTier(market);
   const { title, subtitle } = cardNames(card, lang, uiLang);
   // Korean cards carry Japanese data, but the eBay query must say "Korean"; the English name needs the species.
-  const ebayCard = useMemo(
-    () => ({ ...card, lang: lang === 'ko' ? lang : card.lang, dexIds: speciesIds(card) }),
+  const query = useMemo(
+    () => ebayQuery({ ...card, lang: lang === 'ko' ? lang : card.lang, dexIds: speciesIds(card) }),
     [card, lang],
   );
-  const number = card.setOfficialCount ? `${card.localId}/${card.setOfficialCount}` : card.localId;
   const several = card.variants.length > 1;
+  const variantName = several ? variantLabel(variant.key, uiLang) : undefined;
 
   const picture = (
-    <CardImage image={card.image} fallback={card.imageFallback} photo={photo} alt={title} tier={tier} eager />
+    <CardImage
+      image={card.image}
+      fallback={card.imageFallback}
+      photo={photo}
+      alt={title}
+      tier={tier}
+      eager
+      code={{ set: card.setId, number: printedNumberOf(card) }}
+    />
   );
 
   return (
@@ -127,7 +165,7 @@ function CardResult({ card, lang, photo, fromScan }: CardResultProps) {
         <button type="button" className="card-art pop-in" onClick={() => setZoomed(true)} aria-label={t('zoom')}>
           {picture}
           <span className="card-zoom-hint" aria-hidden="true">
-            <Icon name="search" size={18} strokeWidth={2.5} />
+            <Icon name="search" size={16} strokeWidth={2.5} />
           </span>
         </button>
         {celebrate && <Confetti />}
@@ -136,27 +174,28 @@ function CardResult({ card, lang, photo, fromScan }: CardResultProps) {
       <div className="card-head">
         <h1 className="card-name">{title}</h1>
         {subtitle && <p className="card-subtitle">{subtitle}</p>}
-        <div className="chip-row card-chips">
-          <span className="chip">
-            {card.setName}
-            <span className="card-chip-num tabular">#{number}</span>
+        <div className="card-chips">
+          <span className="chip card-chip-set">
+            <span aria-hidden="true">{LANG_FLAGS[lang]}</span>
+            <span className="sr-only">{t(lang)}</span>
+            <span className="card-chip-setname">{card.setName}</span>
+            <span className="card-chip-num tabular">#{printedNumberOf(card)}</span>
           </span>
-          <span className="chip">{LANG_CHIPS[lang]}</span>
-          {card.rarity && <span className="chip">{card.rarity}</span>}
+          {card.rarity && <span className="chip">{rarityLabel(card.rarity, uiLang)}</span>}
         </div>
       </div>
 
-      {several && <VariantPicker variants={card.variants} selected={variant.key} onSelect={setVariantKey} />}
+      <PriceHero summary={variant.summary} tier={tier} variantName={variantName} />
 
-      <PriceHero summary={variant.summary} tier={tier} />
+      {several && <VariantPicker variants={card.variants} selected={variant.key} onSelect={setVariantKey} />}
 
       <CollectButton card={card} variantKey={variant.key} photo={photo} />
 
-      <EbayPanel card={ebayCard} />
-
-      <MorePrices variant={variant} variantName={several ? variantLabel(variant.key, uiLang) : undefined} />
+      <EbayPanel query={query} />
 
       <p className="caption muted card-disclaimer">{t('disclaimer')}</p>
+
+      <MorePrices variant={variant} variantName={variantName} ebayQuery={query} workerHint={!ebayWorkerUrl} />
 
       <Sheet open={zoomed} onClose={() => setZoomed(false)} title={title}>
         <div className="card-zoom">{picture}</div>

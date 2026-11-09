@@ -17,6 +17,7 @@ type Key =
   | 'less'
   | 'more'
   | 'qty'
+  | 'qty1'
   | 'remove'
   | 'confirmTitle'
   | 'confirmText'
@@ -30,6 +31,7 @@ const STRINGS: Strings<Key> = {
     less: '한 장 빼기',
     more: '한 장 더하기',
     qty: '{n}장',
+    qty1: '1장',
     remove: '지우기',
     confirmTitle: '이 카드를 뺄까요?',
     confirmText: '{name} 카드가 내 카드에서 빠져요.',
@@ -42,6 +44,7 @@ const STRINGS: Strings<Key> = {
     less: 'One less',
     more: 'One more',
     qty: '{n} cards',
+    qty1: '1 card',
     remove: 'Remove',
     confirmTitle: 'Remove this card?',
     confirmText: '{name} will leave My Cards.',
@@ -68,7 +71,14 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
   const body: ReactNode = (
     <>
       <span className="collection-art">
-        <CardImage image={item.image} fallback={item.imageFallback} photo={photo} alt={item.name} size="thumb" />
+        <CardImage
+          image={item.image}
+          fallback={item.imageFallback}
+          photo={photo}
+          alt={item.name}
+          size="thumb"
+          code={{ set: item.setId, number: item.localId }}
+        />
         {showVariant && <span className="collection-variant">{variantLabel(item.variant, lang)}</span>}
         {item.qty > 1 && !editing && <span className="collection-qty">×{item.qty}</span>}
       </span>
@@ -76,7 +86,7 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
       <span className="collection-sub truncate">{sub}</span>
       <span className="collection-price">
         {tier && <span className={`tier-dot tier-${tier}`} aria-hidden="true" />}
-        {item.priceUsd === null ? <span className="muted">{t('noPrice')}</span> : <Money usd={item.priceUsd} />}
+        {item.priceUsd === null ? <span className="muted">{t('noPrice')}</span> : <Money usd={item.priceUsd} approx={item.priceApprox} />}
       </span>
     </>
   );
@@ -89,6 +99,17 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
         <Link to={`/card/${item.lang}/${encodeURIComponent(item.id)}`} className="collection-card">
           {body}
         </Link>
+      )}
+      {editing && (
+        // Delete sits on the card's corner (like iOS edit mode) so the − / + stepper gets the whole row.
+        <button
+          type="button"
+          className="btn btn-icon collection-remove pop-in"
+          onClick={() => onRemove(item)}
+          aria-label={`${t('remove')}: ${item.name}`}
+        >
+          <Icon name="trash" size={18} />
+        </button>
       )}
       {editing && (
         <div className="collection-edit pop-in">
@@ -104,7 +125,7 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
             </button>
             <span className="tabular" aria-live="polite">
               <span aria-hidden="true">{item.qty}</span>
-              <span className="sr-only">{t('qty', { n: item.qty })}</span>
+              <span className="sr-only">{item.qty === 1 ? t('qty1') : t('qty', { n: item.qty })}</span>
             </span>
             <button
               type="button"
@@ -115,14 +136,6 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
               <Icon name="plus" size={20} />
             </button>
           </div>
-          <button
-            type="button"
-            className="btn btn-icon collection-remove"
-            onClick={() => onRemove(item)}
-            aria-label={t('remove')}
-          >
-            <Icon name="trash" size={20} />
-          </button>
         </div>
       )}
     </li>

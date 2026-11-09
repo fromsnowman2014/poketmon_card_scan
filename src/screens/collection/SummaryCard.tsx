@@ -9,7 +9,7 @@ import type { CollectionItem } from '../../lib/types';
 import { useOnline } from '../../lib/useOnline';
 import { todayLocal, weekChange, type WeekChange } from '../../lib/weekChange';
 import { cardCount, oldestUpdate } from './stats';
-import { useRefreshPrices } from './useRefreshPrices';
+import { useAutoRefreshPrices, useRefreshPrices } from './useRefreshPrices';
 
 type Key =
   | 'total'
@@ -90,15 +90,17 @@ export function SummaryCard({ items }: { items: CollectionItem[] }) {
   const online = useOnline();
   const snapshots = useSnapshots();
   const { progress, refresh } = useRefreshPrices(items);
+  useAutoRefreshPrices(items);
   const total = collectionTotalUsd(items);
   const count = cardCount(items);
-  const change = weekChange(snapshots, total, todayLocal());
+  // Price movement of the cards saved then and now only: adding a card is not "went up".
+  const change = weekChange(snapshots, items, todayLocal());
   const checked = oldestUpdate(items);
 
   useEffect(() => {
     // Keeps the daily history "since last week" compares against, including right after a refresh.
-    if (items.length) recordSnapshot(total);
-  }, [items.length, total]);
+    if (items.length) recordSnapshot(items);
+  }, [items]);
 
   const onRefresh = async () => {
     const { failed } = await refresh();
@@ -114,7 +116,13 @@ export function SummaryCard({ items }: { items: CollectionItem[] }) {
         </span>
         <span className="collection-count">{count === 1 ? t('count1') : t('count', { n: count })}</span>
       </div>
-      <Money usd={total} secondary animate className="price-xl collection-total" />
+      <Money
+        usd={total}
+        approx={items.some((i) => i.priceApprox)}
+        secondary
+        animate
+        className="price-xl collection-total"
+      />
       {change && change.deltaUsd !== 0 && <ChangeLine change={change} />}
 
       <div className="divider" />

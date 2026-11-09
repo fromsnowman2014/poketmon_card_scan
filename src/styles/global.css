@@ -37,14 +37,35 @@ body {
   overflow-wrap: break-word;
 }
 
-/* Standalone iOS uses a translucent status bar with white text: keep it readable in light mode. */
-:root[data-theme="light"] body::before {
+/*
+ * Status-bar scrim. Installed on iOS the app runs under a translucent status bar with white text
+ * (black-translucent + viewport-fit=cover), so content that scrolls up would show behind the clock.
+ * Dark: a frosted strip like the scrolled TopBar, shown once the page scrolls (App sets <html data-scrolled>) on
+ * screens without a TopBar (Home); a sticky TopBar already covers the status bar with the same backdrop.
+ * Light: always the brand gradient, which keeps the white status-bar text readable.
+ * Zero height in a Safari tab (no safe-area inset), so it only matters for the installed app.
+ */
+body::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;
   height: var(--safe-top);
-  background: var(--grad-primary);
+  background: var(--chrome);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  backdrop-filter: blur(20px) saturate(1.5);
   z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+}
+
+:root[data-scrolled]:not(:has(.topbar)) body::before {
+  opacity: 1;
+}
+
+:root[data-theme="light"] body::before {
+  background: var(--grad-primary);
+  opacity: 1;
 }
 
 img,
@@ -120,7 +141,8 @@ p {
   margin-inline: auto;
   min-height: 100vh;
   min-height: 100dvh;
-  padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 32px);
+  /* Room for the tab bar + raised Scan button, so the last (and any centered) content scrolls clear of it. */
+  padding-bottom: var(--screen-bottom);
 }
 
 .screen-pad {
@@ -394,7 +416,7 @@ button.chip::after { content: ""; position: absolute; inset: -4px 0; }
   -webkit-appearance: none;
 }
 
-.input::placeholder { color: var(--text-muted); opacity: 0.8; font-weight: 500; }
+.input::placeholder { color: var(--text-muted); opacity: 0.9; font-weight: 500; }
 .input:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-soft); }
 
 /* ---------- Value tiers ---------- */

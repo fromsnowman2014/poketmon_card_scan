@@ -23,7 +23,10 @@
   --focus: #60a5fa;
   --chrome: #0a1020d9; /* translucent top/tab bar backdrop */
 
-  --grad-primary: linear-gradient(135deg, #2563eb 0%, #0891b2 100%);
+  /* Blue → cyan-700: white text stays ≥ 5:1 (WCAG AA) along the whole gradient. */
+  --grad-primary: linear-gradient(135deg, #2563eb 0%, #0e7490 100%);
+  /* Gradient for text on the page background (the wordmark): brighter in dark, ≥ 4.5:1 in both themes. */
+  --grad-text: linear-gradient(135deg, #3b82f6 0%, #22d3ee 100%);
   --grad-hero: radial-gradient(120% 80% at 50% 0%, #1e3a8a55 0%, transparent 60%);
   --grad-gold: linear-gradient(110deg, #f59e0b 0%, #fde68a 45%, #f59e0b 60%, #fbbf24 100%);
   --grad-card-back: linear-gradient(160deg, #1d3b8f 0%, #0f1f4d 55%, #0b1633 100%);
@@ -66,6 +69,10 @@
   --tap: 44px;
   --topbar-h: 56px;
   --tabbar-h: 64px;
+  /* How far the raised Scan button rises above the tab bar (plus its 5px ring). */
+  --tabbar-lift: 24px;
+  /* Bottom padding of every scrolling screen: clears the tab bar, the raised Scan button and the home indicator. */
+  --screen-bottom: calc(var(--tabbar-h) + var(--tabbar-lift) + 5px + var(--safe-bottom) + 28px);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -96,8 +103,8 @@
   --primary-text: #1d4ed8;
   --primary-soft: #2563eb1a;
   --accent: #0891b2;
-  --up: #047857;
-  --up-soft: #04785718;
+  --up: #046c4e;
+  --up-soft: #046c4e18;
   --down: #b91c1c;
   --down-soft: #b91c1c14;
   --overlay: #0b153066;
@@ -105,16 +112,17 @@
   --chrome: #f4f7fee0;
 
   --grad-hero: radial-gradient(120% 80% at 50% 0%, #93c5fd59 0%, transparent 60%);
+  --grad-text: linear-gradient(135deg, #2563eb 0%, #0e7490 100%);
 
   --tier-common: #475569;
   --tier-common-bg: #4755691a;
-  --tier-nice: #15803d;
-  --tier-nice-bg: #15803d1a;
+  --tier-nice: #166534;
+  --tier-nice-bg: #1665341a;
   --tier-rare: #1d4ed8;
   --tier-rare-bg: #1d4ed81a;
   --tier-super: #7e22ce;
   --tier-super-bg: #7e22ce1a;
-  --tier-treasure: #b45309;
+  --tier-treasure: #a04808;
   --tier-treasure-bg: #f59e0b26;
 
   --glow: 0 6px 24px -10px #1d4ed840, 0 0 0 1px #d6dfef;

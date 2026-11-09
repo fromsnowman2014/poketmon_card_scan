@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useRef } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TabBar } from './components/TabBar';
-import { ToastHost } from './components/Toast';
+import { showToast, ToastHost } from './components/Toast';
+import { useStrings, type Strings } from './lib/i18n';
 import { useRoute, type Route } from './lib/router';
-import { useSettings } from './lib/store';
+import { onCollectionSaveFailed, useSettings } from './lib/store';
 import type { CardLang, Settings } from './lib/types';
 import CardScreen from './screens/CardScreen';
 import CollectionScreen from './screens/CollectionScreen';
@@ -16,6 +17,13 @@ const loadScanScreen = () => import('./screens/ScanScreen');
 const ScanScreen = lazy(loadScanScreen);
 
 const THEME_COLORS = { dark: '#0A1020', light: '#F4F7FE' } as const;
+/** Storage that stays full or blocked fails on every change: say so at most once a minute. */
+const SAVE_FAILED_EVERY_MS = 60_000;
+
+const STRINGS: Strings<'saveFailed'> = {
+  ko: { saveFailed: '앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요.' },
+  en: { saveFailed: "Oops, My Cards couldn't be saved. Ask a grown\u2011up to check the phone's storage." },
+};
 const CARD_LANGS: readonly string[] = ['en', 'ja', 'ko'] satisfies CardLang[];
 
 function ScreenLoading() {
@@ -72,9 +80,39 @@ function useDocumentSettings({ theme, uiLang }: Settings): void {
   }, [theme]);
 }
 
+/** Sets <html data-scrolled> while the page is scrolled down; the dark status-bar scrim fades in (global.css). */
+function useScrolledFlag(): void {
+  useEffect(() => {
+    const root = document.documentElement;
+    const onScroll = () => root.toggleAttribute('data-scrolled', window.scrollY > 4);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+}
+
+/** A toast when a change to My Cards could not be written (storage full or blocked); it still shows until closed. */
+function useSaveFailedToast(): void {
+  const t = useStrings(STRINGS);
+  const last = useRef(0);
+  useEffect(
+    () =>
+      onCollectionSaveFailed(() => {
+        const now = Date.now();
+        if (now - last.current < SAVE_FAILED_EVERY_MS) return;
+        last.current = now;
+        // After the current handler: its own toast ("내 카드에 넣었어요!") must not replace this one.
+        setTimeout(() => showToast(t('saveFailed'), { icon: '⚠️', durationMs: 5000 }), 0);
+      }),
+    [t],
+  );
+}
+
 export default function App() {
   const route = useRoute();
   useDocumentSettings(useSettings());
+  useScrolledFlag();
+  useSaveFailedToast();
 
   useEffect(() => {
     // Fetch the scan screen in the background so the camera opens instantly on first tap.

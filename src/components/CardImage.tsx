@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { cardImage } from '../lib/tcgdex';
 import type { ValueTier } from '../lib/types';
+import { nextAfterError, startState, type ImageState } from './cardImageChain';
 import { cx } from './cx';
 import './CardImage.css';
 
@@ -18,6 +19,11 @@ export interface CardImageProps {
   tier?: ValueTier | null;
   /** Load immediately instead of lazily (above-the-fold hero image). */
   eager?: boolean;
+  /**
+   * Set code and card number printed on the card back when no picture can be shown (there is none, or every
+   * source failed to load), so look-alike card backs in a grid can still be told apart.
+   */
+  code?: { set: string; number: string };
   className?: string;
 }
 
@@ -42,19 +48,21 @@ function CardBack() {
 }
 
 /**
- * Card picture with a fallback chain: TCGdex image → fallback URL → user photo → card back.
+ * Card picture with a fallback chain: TCGdex image → fallback URL → user photo → card back (with `code` on it).
  * Always 63:88 with card-like rounded corners.
  */
-export function CardImage({ image, fallback, photo, alt, size = 'full', tier, eager, className }: CardImageProps) {
+export function CardImage({ image, fallback, photo, alt, size = 'full', tier, eager, code, className }: CardImageProps) {
   const tcgdexSrc = cardImage(image, size === 'thumb' ? 'low' : 'high');
   const sources = [tcgdexSrc, fallback, photo].filter((s): s is string => !!s);
   const chain = sources.join('\n');
-  const [state, setState] = useState({ chain, index: 0, loaded: false });
+  const [state, setState] = useState<ImageState>(() => startState(chain));
   // New sources (another card or variant): start over from the best one.
-  if (state.chain !== chain) setState({ chain, index: 0, loaded: false });
+  if (state.chain !== chain) setState(startState(chain));
 
-  const src = state.chain === chain ? sources[state.index] : sources[0];
-  const loading = !!src && !state.loaded;
+  const current = state.chain === chain ? state : startState(chain);
+  const src = sources[current.index];
+  const cors = src !== undefined && src === tcgdexSrc && current.cors;
+  const loading = !!src && !current.loaded;
 
   return (
     <div
@@ -63,19 +71,25 @@ export function CardImage({ image, fallback, photo, alt, size = 'full', tier, ea
       aria-label={src ? undefined : alt}
     >
       {!src && <CardBack />}
+      {!src && code && (
+        <span className="card-image-code" aria-hidden="true">
+          {code.set}
+          <b>{code.number}</b>
+        </span>
+      )}
       {src && (
         <img
-          key={src}
+          key={`${src}|${cors ? 'cors' : 'plain'}`}
           src={src}
           // TCGdex sends CORS headers: a CORS response can be cached by the service worker for offline use
           // (opaque ones are not). The TCGplayer fallback has no CORS headers, so it loads as a plain image.
-          crossOrigin={src === tcgdexSrc ? 'anonymous' : undefined}
+          crossOrigin={cors ? 'anonymous' : undefined}
           alt={alt}
           loading={eager ? 'eager' : 'lazy'}
           decoding="async"
           draggable={false}
           onLoad={() => setState((s) => ({ ...s, loaded: true }))}
-          onError={() => setState((s) => ({ ...s, index: s.index + 1, loaded: false }))}
+          onError={() => setState((s) => nextAfterError(s, s.index === 0 && tcgdexSrc !== undefined))}
         />
       )}
     </div>

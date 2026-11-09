@@ -1,7 +1,7 @@
 // TCGdex client: sets, card details (with normalized prices), printed-code lookup and multilingual search.
 import type { CardBrief, CardDetail, CardLang, PrintedCode } from './types';
 import { cached, fetchJson, HttpError } from './cache';
-import { getRates, type Rates } from './fx';
+import { getRates, getRatesSync, type Rates } from './fx';
 import { findSpecies, translateCardName } from './names';
 import { buildVariants } from './pricing';
 import enSetData from '../data/en-sets.json';
@@ -41,6 +41,16 @@ const POCKET_CARD = /^(A\d+[ab]?|B\d+a?|P-A)-/;
 const EN_PROMO_SETS: Record<string, string> = { SWSH: 'swshp', SM: 'smp', XY: 'xyp', BW: 'bwp', HGSS: 'hgssp', DP: 'dpp' };
 
 const EN_SETS = new Map((enSetData as { id: string; abbr: string | null; releaseDate: string }[]).map((s) => [s.id, s]));
+
+/** Printed EN set codes, uppercase ("PAR", "OBF", "SVP", "SWSH"…), to accept them typed in any case. */
+const EN_CODES = new Set([
+  ...[...EN_SETS.values()].flatMap((s) => (s.abbr && !s.abbr.includes(':') ? [s.abbr.toUpperCase()] : [])),
+  ...Object.keys(EN_PROMO_SETS),
+]);
+
+/** Subset sets whose cards print a lettered total: "TG05/TG30", "GG35/GG70", "SV49/SV94". */
+const SUBSET_SET_NAME = /\s(?:Trainer Gallery|Galarian Gallery|Shiny Vault)$/i;
+const PROMO_SET_NAME = /promo|プロモ/i;
 
 /** KO data is nearly empty and Korean cards print the JA set codes, so KO reads from JA. */
 const dataLang = (lang: CardLang): DataLang => (lang === 'en' ? 'en' : 'ja');
@@ -141,9 +151,31 @@ export function splitCardId(id: string, localId?: string): { setId: string; loca
   return at < 0 ? { setId: id, localId: '' } : { setId: id.slice(0, at), localId: id.slice(at + 1) };
 }
 
+/**
+ * True for promo sets: JA "SV-P"/"M-P" (official 0), EN Black Star Promos. EN svp/smp/swshp/xyp… report the
+ * number of promos as their official count, but their cards print no total ("SVP EN 085", "SWSH284").
+ */
+const isPromoSet = (setId: string, setName: string, official: number | undefined) =>
+  !official || /-P$/i.test(setId) || PROMO_SET_NAME.test(setName);
+
+/**
+ * The card number as printed: "084/187"; JA promos "085/SV-P"; EN promos just the number ("085", "SWSH284");
+ * subset sets keep the letters on the total ("TG05/TG30"); other lettered numbers ("RC1" in Generations) alone,
+ * since their total is not the set's.
+ */
+export function printedNumber(card: { localId: string; setId: string; setName: string; lang: CardLang }, official: number | undefined): string {
+  const { localId, setId, setName } = card;
+  if (isPromoSet(setId, setName, official)) return card.lang !== 'en' && /-P$/i.test(setId) ? `${localId}/${setId.toUpperCase()}` : localId;
+  const prefix = /^([A-Z]+)\d+$/i.exec(localId)?.[1];
+  if (prefix) return SUBSET_SET_NAME.test(setName) ? `${localId}/${prefix.toUpperCase()}${official}` : localId;
+  return `${localId}/${official}`;
+}
+
 function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[]): CardDetail {
   const setId = raw.set?.id ?? splitCardId(raw.id, raw.localId).setId;
   const set = sets.find((s) => s.id === setId);
+  const setName = raw.set?.name ?? set?.name ?? setId;
+  const official = raw.set?.cardCount?.official ?? set?.official;
   const { variants, defaultVariant } = buildVariants(raw, rates);
   const tcgplayerId = variants.find((v) => v.tcgplayerId)?.tcgplayerId;
   return {
@@ -153,9 +185,9 @@ function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[]): 
     name: raw.name,
     image: raw.image,
     setId,
-    setName: raw.set?.name ?? set?.name ?? setId,
-    // Promo sets report 0.
-    setOfficialCount: raw.set?.cardCount?.official || undefined,
+    setName,
+    setOfficialCount: isPromoSet(setId, setName, official) ? undefined : official,
+    printedNumber: printedNumber({ localId: raw.localId, setId, setName, lang }, official),
     setReleaseDate: set?.releaseDate,
     rarity: raw.rarity && raw.rarity !== 'None' ? raw.rarity : undefined,
     hp: raw.hp,
@@ -169,16 +201,17 @@ function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[]): 
   };
 }
 
-/** Full card with prices. KO reads JA data (lang stays 'ja'). Cached 30 min. 404 → HttpError status 404. */
+/**
+ * Full card with prices. KO reads JA data (lang stays 'ja'). Cached 30 min. 404 → HttpError status 404.
+ * Never waits for exchange rates: EUR prices are converted with the last known (or fallback) rates while live
+ * rates load in the background; pricing.applyRates re-converts once they arrive.
+ */
 export function getCard(lang: CardLang, id: string): Promise<CardDetail> {
   const src = dataLang(lang);
   return cached(`card:${src}:${id}`, 30 * MINUTE, async () => {
-    const [raw, rates, sets] = await Promise.all([
-      fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`),
-      getRates(),
-      setsOrEmpty(src),
-    ]);
-    return toDetail(raw, src, rates, sets);
+    void getRates();
+    const [raw, sets] = await Promise.all([fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`), setsOrEmpty(src)]);
+    return toDetail(raw, src, getRatesSync(), sets);
   });
 }
 
@@ -363,18 +396,29 @@ export async function findByCode(code: PrintedCode, langs: CardLang[] = guessLan
 // ---------- search ----------
 
 /**
- * A typed printed code: "084/187", "sv8a 084", "SV8a-084", "G sv8a 084/187", "PAR 123", "PAR EN 123/182",
- * "TG01/TG30", "085/SV-P", "sv08.5-084". Lowercase words without a digit ("mew 2") stay name searches.
+ * A typed printed code: "084/187", "sv8a 084", "SV8a-084", "G sv8a 084/187", "PAR 123", "par 123/182",
+ * "PAR EN 123/182", "TG01/TG30", "tg05/tg30", "085/SV-P", "sv08.5-084", "SWSH284", "svp 085".
+ * Words without a digit count as a set code when written in capitals or when they are a known EN code followed
+ * by a 2–3 digit number; other lowercase words ("mew 2") stay name searches.
  */
-function parseQueryCode(query: string): PrintedCode | undefined {
+export function parseQueryCode(query: string): PrintedCode | undefined {
   const q = query.replace(/\s+/g, ' ').replace(/^[A-Z] (?=\S+ \S)/, '');
   const promo = /^(\d{1,3}) ?\/ ?([A-Z]{1,2}-P)$/i.exec(q);
   if (promo) return { setCode: promo[2].toUpperCase(), number: promo[1], promo: true, lang: 'ja' };
+  // Old EN promos print one token: "SWSH284", "SM60", "XY01" (also "SVP085" typed without a space).
+  const enPromo = /^(SWSH|HGSS|SVP|MEP|SM|XY|BW|DP) ?(\d{1,3})$/i.exec(q);
+  if (enPromo) return { setCode: enPromo[1].toUpperCase(), number: enPromo[2], lang: 'en' };
   const m = /^(?:([A-Za-z][A-Za-z0-9.+]*?(?:-P)?)(?: (?:EN|JP|KR))?[ -])?([A-Za-z]{0,4}\d{1,3})(?: ?\/ ?([A-Za-z]{0,4}\d{1,3}))?$/i.exec(q);
   if (!m) return undefined;
-  const [, setCode, number, total] = m;
-  if (setCode && !total && !/\d|-P$/i.test(setCode) && !/^[A-Z]{2,5}$/.test(setCode)) return undefined;
-  return { setCode, number, total };
+  const [, rawSetCode, rawNumber, rawTotal] = m;
+  const number = rawNumber.toUpperCase();
+  const total = rawTotal?.toUpperCase();
+  if (!rawSetCode) return { number, total };
+  const known = EN_CODES.has(rawSetCode.toUpperCase());
+  const isCode =
+    !!total || /\d|-P$/i.test(rawSetCode) || /^[A-Z]{2,5}$/.test(rawSetCode) || (known && /^\d{2,3}$/.test(number));
+  if (!isCode) return undefined;
+  return { setCode: known ? rawSetCode.toUpperCase() : rawSetCode, number, total };
 }
 
 const HANGUL = /[\uAC00-\uD7A3]/;

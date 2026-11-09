@@ -17,17 +17,29 @@ const TTL_MS = 12 * 60 * 60 * 1000;
 /** After both providers fail, don't retry for a while (avoids slowing every card load when offline). */
 const FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 
-const SOURCES = [
-  'https://open.er-api.com/v6/latest/USD',
-  'https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,KRW',
+/** Short: nothing waits on rates any more (cards use the last known ones), so a hanging host just moves on. */
+const TIMEOUT_MS = 3500;
+
+type Json = Record<string, unknown> | null | undefined;
+
+/** Free, keyless, CORS-enabled providers (checked 2026-11-08), each mapped to {EUR, KRW} per USD. */
+const SOURCES: { url: string; pick: (x: Json) => Json }[] = [
+  { url: 'https://open.er-api.com/v6/latest/USD', pick: (x) => x?.rates as Json },
+  { url: 'https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,KRW', pick: (x) => x?.rates as Json },
+  {
+    url: 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json',
+    pick: (x) => {
+      const usd = x?.usd as Json;
+      return usd && { EUR: usd.eur, KRW: usd.krw };
+    },
+  },
 ];
 
 function isRate(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0;
 }
 
-function toRates(x: unknown): Rates | undefined {
-  const r = (x as { rates?: Record<string, unknown> } | null)?.rates;
+function toRates(r: Json): Rates | undefined {
   return r && isRate(r.EUR) && isRate(r.KRW) ? { EUR: r.EUR, KRW: r.KRW, fetchedAt: new Date().toISOString() } : undefined;
 }
 
@@ -37,9 +49,10 @@ function isRates(x: unknown): x is Rates {
 }
 
 async function fetchRates(): Promise<Rates> {
-  for (const url of SOURCES) {
+  for (const { url, pick } of SOURCES) {
     try {
-      const rates = toRates(await fetchJson<unknown>(url, { timeoutMs: 8000, retries: 1 }));
+      const body = await fetchJson<Json>(url, { timeoutMs: TIMEOUT_MS, retries: 0 });
+      const rates = toRates(pick(typeof body === 'object' ? body : undefined));
       if (rates) return rates;
     } catch {
       // try the next provider
@@ -71,7 +84,8 @@ export function getRatesSync(): Rates {
 export async function getRates(): Promise<Rates> {
   if (Date.now() - failedAt < FAILURE_COOLDOWN_MS) return getRatesSync();
   try {
-    const rates = await cached(KEY, TTL_MS, fetchRates);
+    // keep: the expired entry stays as the "last known" rates (getRatesSync) when pruning the cache.
+    const rates = await cached(KEY, TTL_MS, fetchRates, { keep: true });
     publish(rates);
     return getRatesSync();
   } catch {

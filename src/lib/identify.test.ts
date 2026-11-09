@@ -22,7 +22,7 @@ function ocrReads(...texts: string[]) {
       const parsed = passes.map((p) => p.parsed);
       if (await opts.shouldStop?.(mergeParses(parsed), parsed)) break;
     }
-    return { passes, merged: mergeParses(passes.map((p) => p.parsed)) };
+    return { passes, merged: mergeParses(passes.map((p) => p.parsed)), status: 'done' as const };
   });
 }
 
@@ -148,5 +148,46 @@ describe('identifyCard language routing', () => {
     const result = await identifyCard(card, undefined, { langHint: 'ko' });
     expect(result.code.lang).toBe('en');
     expect(findByCode).toHaveBeenCalledWith(expect.anything(), ['en']);
+  });
+});
+
+describe('identifyCard status and cancellation', () => {
+  it('reports a ready engine as done', async () => {
+    ocrReads('G sv8a 084/187', 'G sv8a 084/187');
+    expect((await identifyCard(card)).status).toBe('done');
+  });
+
+  it('passes isStale and maxPasses to the OCR', async () => {
+    ocrReads('G sv8a 084/187');
+    const isStale = () => false;
+    await identifyCard(card, undefined, { isStale, maxPasses: 3 });
+    expect(vi.mocked(readCodeStrip).mock.calls[0][1]).toMatchObject({ isStale, maxPasses: 3 });
+  });
+
+  it('skips the lookups once the scan was stopped', async () => {
+    let stale = false;
+    vi.mocked(readCodeStrip).mockImplementation(async () => {
+      stale = true; // the kid tapped X while the passes ran
+      const parsed = parsePrintedCode('G sv8a 084/187');
+      return { passes: [{ text: 'G sv8a 084/187', parsed }], merged: parsed, status: 'done' };
+    });
+    const result = await identifyCard(card, undefined, { isStale: () => stale });
+    expect(result.status).toBe('stopped');
+    expect(result.candidates).toEqual([]);
+    expect(findByCode).not.toHaveBeenCalled();
+  });
+
+  it('says so when the OCR engine could not load', async () => {
+    vi.mocked(readCodeStrip).mockResolvedValue({ passes: [], merged: mergeParses([]), status: 'unavailable' });
+    const result = await identifyCard(card);
+    expect(result).toMatchObject({ status: 'unavailable', candidates: [] });
+    expect(findByCode).not.toHaveBeenCalled();
+  });
+
+  it('does not wait for the engine itself (readCodeStrip waits, and can be stopped)', async () => {
+    const { preloadOcr } = await import('./ocr');
+    vi.mocked(preloadOcr).mockReturnValueOnce(new Promise(() => undefined)); // a stalled download
+    ocrReads('G sv8a 084/187', 'G sv8a 084/187');
+    expect((await identifyCard(card)).candidates).toHaveLength(1);
   });
 });

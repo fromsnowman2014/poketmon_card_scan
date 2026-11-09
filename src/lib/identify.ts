@@ -1,6 +1,7 @@
 // Photo of a card → candidate cards: OCR the printed collector line, then look the code up on TCGdex.
 import enSets from '../data/en-sets.json';
-import { preloadOcr, readCodeStrip } from './ocr';
+import type { Rect } from './imageProc';
+import { preloadOcr, readCodeStrip, type CodeStripStatus } from './ocr';
 import type { ParsedCode } from './parseCode';
 import { findByCode, getSets, resolveSets } from './tcgdex';
 import type { CardBrief, CardLang, IdentifyResult, PrintedCode, ProgressFn } from './types';
@@ -11,25 +12,41 @@ export interface IdentifyOptions {
    * codes as Korean (Korean cards print the same codes, and OCR cannot tell them apart).
    */
   langHint?: CardLang;
+  /** True once the result is no longer wanted (the kid stopped): ends OCR between passes and skips the lookups. */
+  isStale?: () => boolean;
+  /** Read with only the best few OCR passes (cheap extra tries, e.g. the photo turned sideways). */
+  maxPasses?: number;
+  /** The part of the card holding the collector line, as fractions (default: ocr.ts's CODE_STRIP). */
+  band?: Rect;
+}
+
+export interface IdentifyOutcome extends IdentifyResult {
+  /** 'unavailable': the OCR engine could not load (offer typing). 'stopped': isStale cut it short. */
+  status: CodeStripStatus;
 }
 
 // Subset keys like "SHF:SV" never appear in OCR text; 2-letter abbreviations match too much noise.
 const EN_ABBRS = (enSets as { abbr: string | null }[]).flatMap((s) => (s.abbr && /^[A-Z0-9]{3,}$/.test(s.abbr) ? [s.abbr] : []));
 
 /** Read the collector line of a cropped card (63:88) and find matching cards, best first. Never throws. */
-export async function identifyCard(card: HTMLCanvasElement, onProgress?: ProgressFn, opts: IdentifyOptions = {}): Promise<IdentifyResult> {
-  const hint = opts.langHint;
+export async function identifyCard(card: HTMLCanvasElement, onProgress?: ProgressFn, opts: IdentifyOptions = {}): Promise<IdentifyOutcome> {
+  const { langHint: hint, isStale, maxPasses, band } = opts;
   onProgress?.('loading', 0);
-  const [knownSetIds] = await Promise.all([jaSetIds(), preloadOcr()]);
-  const { passes, merged } = await readCodeStrip(card, {
+  void preloadOcr(); // the engine loads while the set list does; readCodeStrip waits for it
+  const knownSetIds = await jaSetIds();
+  const read = await readCodeStrip(card, {
     onProgress,
+    isStale,
+    maxPasses,
+    band,
     parse: { knownSetIds, knownEnAbbrs: EN_ABBRS },
     shouldStop: (sofar, parsed) => isConfident(sofar, parsed, hint),
   });
-  const rawText = passes.map((p) => p.text.trim()).filter(Boolean).join('\n');
-  const code = toPrintedCode(merged, hint);
-  if (!code.number) return { rawText, code, candidates: [] };
-  return { rawText, code, candidates: await lookup(code, hint, onProgress) };
+  const rawText = read.passes.map((p) => p.text.trim()).filter(Boolean).join('\n');
+  const code = toPrintedCode(read.merged, hint);
+  const status: CodeStripStatus = isStale?.() ? 'stopped' : read.status;
+  if (!code.number || status === 'stopped') return { rawText, code, candidates: [], status };
+  return { rawText, code, candidates: await lookup(code, hint, onProgress, isStale), status };
 }
 
 async function jaSetIds(): Promise<string[]> {
@@ -73,10 +90,11 @@ function toPrintedCode({ setCode, number, total, lang, promo }: ParsedCode, hint
   return { setCode, number, total, lang: lang === 'ja' && hint === 'ko' ? 'ko' : lang, promo };
 }
 
-async function lookup(code: PrintedCode, hint: CardLang | undefined, onProgress?: ProgressFn): Promise<CardBrief[]> {
+async function lookup(code: PrintedCode, hint: CardLang | undefined, onProgress?: ProgressFn, isStale?: () => boolean): Promise<CardBrief[]> {
   const plan = lookupPlan(code, hint);
   let found: CardBrief[] = [];
   for (const [i, langs] of plan.entries()) {
+    if (isStale?.()) return [];
     onProgress?.('matching', i / plan.length);
     found = await findByCode(forLookup(code), langs).catch(() => []);
     if (found.length) break;

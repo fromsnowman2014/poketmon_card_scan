@@ -3,8 +3,7 @@
 .card-body {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding-top: 4px;
+  gap: 14px;
 }
 
 /* ---------- Hero picture ---------- */
@@ -13,7 +12,6 @@
   position: relative;
   display: flex;
   justify-content: center;
-  padding: 6px 0 2px;
 }
 
 /* Soft halo in the tier color behind the card. */
@@ -30,12 +28,20 @@
   pointer-events: none;
 }
 
+/*
+ * The art is sized by the viewport height so that the name, chips and the big price (with its second currency)
+ * always fit above the tab bar and its raised Scan button on the first view — even on an iPhone SE (375×667).
+ * --card-art-reserve is everything else from the top bar to the bottom of the low–high row (378px), plus the tab
+ * bar and the part of the Scan button that sticks up (its lift + 5px ring). On an SE that leaves a 126px-wide card
+ * and keeps the whole price panel clear of the Scan button; taller phones hit the 46% cap instead.
+ */
 .card-art {
+  --card-art-reserve: calc(378px + var(--tabbar-h) + var(--tabbar-lift) + 5px);
   position: relative;
   z-index: 1;
   display: block;
-  width: 52%;
-  max-width: 260px;
+  width: clamp(104px, calc((100vh - var(--safe-top) - var(--safe-bottom) - var(--card-art-reserve)) * 63 / 88), min(46%, 220px));
+  width: clamp(104px, calc((100svh - var(--safe-top) - var(--safe-bottom) - var(--card-art-reserve)) * 63 / 88), min(46%, 220px));
   padding: 0;
   border: 0;
   border-radius: 4.8% / 3.4%;
@@ -49,12 +55,12 @@ button.card-art:active {
 
 .card-zoom-hint {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: 6px;
+  bottom: 6px;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: #0a1020b8;
   color: #ffffff;
@@ -75,7 +81,8 @@ button.card-art:active {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-width: 0;
   text-align: center;
 }
 
@@ -89,30 +96,60 @@ button.card-art:active {
 
 .card-subtitle {
   color: var(--text-muted);
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
   font-weight: 600;
+  line-height: 1.3;
 }
 
+/* Short phones (iPhone SE): a slightly smaller name keeps the price above the tab bar. */
+@media (max-height: 720px) {
+  .card-name {
+    font-size: 24px;
+  }
+}
+
+/* One compact row: the language flag sits in the set chip. A very long set name truncates (the number stays);
+   the rarity chip wraps under it only when both can't share the row. */
 .card-chips {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-  margin-top: 6px;
+  gap: 6px;
+  max-width: 100%;
+  margin-top: 4px;
 }
 
 .card-chips .chip {
-  min-height: 30px;
-  padding: 4px 12px;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 10px;
   border-color: transparent;
   background: var(--surface-2);
   color: var(--text);
   font-size: var(--fs-caption);
-  white-space: normal;
+}
+
+.card-chips .card-chip-set {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-chip-setname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-chip-num {
+  flex: none;
   color: var(--text-muted);
 }
 
 /* ---------- Variants ---------- */
+
+.card-variants {
+  margin-top: -4px;
+}
 
 .card-variant-row {
   justify-content: center;
@@ -130,8 +167,8 @@ button.card-art:active {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 22px 18px 16px;
+  gap: 12px;
+  padding: 18px 16px 14px;
   border-radius: var(--radius-lg);
   box-shadow: var(--glow);
 }
@@ -139,8 +176,8 @@ button.card-art:active {
 /* The tier cheer sits on the panel's top edge, so the price moves up toward the fold. */
 .card-price-tiered {
   position: relative;
-  margin-top: 16px;
-  padding-top: 34px;
+  margin-top: 18px;
+  padding-top: 30px;
   background: radial-gradient(120% 70% at 50% 0%, var(--tier-bg), transparent 70%), var(--surface);
   border-color: var(--tier-bg);
   border-color: color-mix(in srgb, var(--tier) 32%, var(--border));
@@ -151,8 +188,13 @@ button.card-art:active {
   top: 0;
   left: 50%;
   transform: translate(-50%, -50%);
+  max-width: calc(100% - 16px);
   border-radius: var(--radius-pill);
   background: var(--surface); /* tier badge fills are translucent: hide the border line behind it */
+}
+
+.card-price-main {
+  gap: 2px;
 }
 
 .card-price-label {
@@ -162,45 +204,84 @@ button.card-art:active {
   letter-spacing: 0;
 }
 
-/* Long KRW amounts ("₩1,338,400") must still fit a 390px phone. */
-.card-price-value {
-  font-size: clamp(40px, 12.5vw, var(--fs-price-xl));
+.card-price-variant {
+  font-weight: 600;
 }
 
+/* Long KRW amounts ("₩13,384,000") must still fit a 375px phone: shrink by the amount's length (Money sets
+   --money-chars; .card-price is the size container). Older browsers use the vw fallback. */
+.card-price {
+  container-type: inline-size;
+}
+
+.card-price-value {
+  font-size: clamp(40px, 12.5vw, var(--fs-price-xl));
+  font-size: clamp(30px, 100cqi / (var(--money-chars, 8) * 0.64), var(--fs-price-xl));
+}
+
+/* A small, calm note under the price: only the arrow and number carry the up/down color. */
 .card-trend {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 12px;
+  gap: 6px;
+  min-height: 26px;
+  margin-top: -4px;
+  padding: 3px 11px;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
   color: var(--text-muted);
-  font-size: var(--fs-small);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+}
+
+.card-trend-pct {
   font-weight: 800;
 }
 
-.card-trend-up {
-  background: var(--up-soft);
+.card-trend-up .card-trend-pct {
   color: var(--up);
 }
 
-.card-trend-down {
-  background: var(--down-soft);
+.card-trend-down .card-trend-pct {
   color: var(--down);
 }
 
+/* Low – [static bar] – high, labels above the ends. Not a slider: thin bar, small flat dot, nothing to grab. */
 .card-range {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(24px, 1fr) auto;
+  grid-template-areas:
+    "label-low . label-high"
+    "low track high";
+  align-items: center;
+  gap: 2px 12px;
   width: 100%;
-  padding-top: 4px;
+  text-align: left;
+}
+
+.card-range-recent {
+  grid-template-areas:
+    "label label label"
+    "low track high";
+}
+
+.card-range-label-low { grid-area: label-low; }
+.card-range-label-high { grid-area: label-high; text-align: right; }
+.card-range-label { grid-area: label; text-align: center; }
+.card-range-low { grid-area: low; }
+.card-range-high { grid-area: high; text-align: right; }
+
+.card-range-value {
+  font-size: var(--fs-body);
+  font-weight: 800;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .card-range-track {
+  grid-area: track;
   position: relative;
-  height: 8px;
-  margin: 0 10px;
+  height: 6px;
   border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--surface-3), var(--tier, var(--primary)));
 }
@@ -208,22 +289,24 @@ button.card-art:active {
 .card-range-dot {
   position: absolute;
   top: 50%;
-  width: 22px;
-  height: 22px;
-  margin: -11px 0 0 -11px;
-  border: 4px solid var(--primary);
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
   border-radius: 50%;
-  background: var(--on-primary);
-  box-shadow: 0 0 0 4px var(--primary-soft), 0 2px 8px #00000059;
+  background: var(--text);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.card-range-single {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px 8px;
 }
 
 .card-price-source {
   text-wrap: balance;
-}
-
-.card-range-ends {
-  font-size: var(--fs-small);
-  font-weight: 700;
 }
 
 .card-price-empty {
@@ -352,6 +435,10 @@ button.card-art:active {
 }
 
 .card-auction-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
   flex: none;
   font-weight: 800;
 }
@@ -363,6 +450,7 @@ button.card-art:active {
 }
 
 .card-ebay-link {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -390,6 +478,14 @@ button.card-art:active {
 .card-ebay-emoji {
   font-size: 28px;
   line-height: 1;
+}
+
+/* Small "leaves the app" arrow in the tile corner. */
+.card-ebay-out {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--text-muted);
 }
 
 .card-ebay-hint {
@@ -461,6 +557,11 @@ button.card-art:active {
 .card-more-cell dd {
   margin: 0;
   font-weight: 800;
+}
+
+.card-more-ebay {
+  padding-top: 4px;
+  overflow-wrap: anywhere;
 }
 
 .card-more-note {

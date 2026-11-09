@@ -198,7 +198,7 @@
 }
 
 .settings-credits .settings-ext {
-  min-height: 36px;
+  min-height: var(--tap);
   font-size: var(--fs-body);
 }
 

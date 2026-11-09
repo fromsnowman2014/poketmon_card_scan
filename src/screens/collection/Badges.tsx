@@ -8,15 +8,15 @@ const STRINGS: Strings<'title' | 'locked' | MilestoneId> = {
     locked: '아직 잠겨 있어요',
     first: '첫 카드',
     ten: '10장 모으기',
-    rare: '첫 레어',
-    treasure: '첫 보물',
+    rare: '첫 용돈 카드',
+    treasure: '첫 보물 카드',
   },
   en: {
     title: 'Badges',
     locked: 'Not yet',
     first: 'First card',
     ten: '10 cards',
-    rare: 'First Rare',
+    rare: 'First Allowance',
     treasure: 'First Treasure',
   },
 };

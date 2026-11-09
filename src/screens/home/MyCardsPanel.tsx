@@ -8,6 +8,7 @@ import { Link } from '../../lib/router';
 import { collectionTotalUsd, recordSnapshot, useCollectionThumbs, useSnapshots } from '../../lib/store';
 import type { CollectionItem } from '../../lib/types';
 import { todayLocal, weekChange, type WeekChange } from '../../lib/weekChange';
+import { useAutoRefreshPrices } from '../collection/useRefreshPrices';
 
 type Key =
   | 'title'
@@ -73,11 +74,13 @@ export function MyCardsPanel({ items }: { items: CollectionItem[] }) {
   const snapshots = useSnapshots();
   const thumbs = useCollectionThumbs();
   const total = collectionTotalUsd(items);
+  // Opening the app keeps saved prices fresh (background refresh of prices older than a day, hourly at most).
+  useAutoRefreshPrices(items);
 
   useEffect(() => {
     // Opening the app is enough to keep the daily history that "since last week" compares against.
-    if (items.length) recordSnapshot(total);
-  }, [items.length, total]);
+    if (items.length) recordSnapshot(items);
+  }, [items]);
 
   if (!items.length) {
     return (
@@ -95,7 +98,8 @@ export function MyCardsPanel({ items }: { items: CollectionItem[] }) {
   }
 
   const count = items.reduce((n, i) => n + i.qty, 0);
-  const change = weekChange(snapshots, total, todayLocal());
+  // Price movement of the cards saved then and now only: adding a card is not "went up".
+  const change = weekChange(snapshots, items, todayLocal());
   const best = [...items].sort((a, b) => (b.priceUsd ?? -1) - (a.priceUsd ?? -1)).slice(0, STACK_SIZE);
 
   return (
@@ -106,7 +110,7 @@ export function MyCardsPanel({ items }: { items: CollectionItem[] }) {
           {t('title')}
           <span className="home-count">{count === 1 ? t('count1') : t('count', { n: count })}</span>
         </span>
-        <Money usd={total} className="home-mycards-total" />
+        <Money usd={total} approx={items.some((i) => i.priceApprox)} className="home-mycards-total" />
         {change && change.deltaUsd !== 0 && <ChangeLine change={change} />}
       </span>
       <span className="home-mycards-stack" aria-hidden="true">

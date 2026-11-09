@@ -10,18 +10,18 @@ export function CardSkeleton({ label }: { label: string }) {
         </div>
       </div>
       <div className="card-head">
-        <Skeleton width="56%" height={32} />
-        <Skeleton width="34%" height={18} />
+        <Skeleton width="50%" height={30} />
+        <Skeleton width="30%" height={17} />
         <div className="row">
-          <Skeleton width={150} height={30} />
-          <Skeleton width={84} height={30} />
+          <Skeleton width={150} height={28} className="card-skel-pill" />
+          <Skeleton width={84} height={28} className="card-skel-pill" />
         </div>
       </div>
       <div className="surface card-price center">
-        <Skeleton width={150} height={42} className="card-skel-pill" />
         <Skeleton width={70} height={15} />
-        <Skeleton width="52%" height={52} />
-        <Skeleton height={10} className="card-skel-pill" />
+        <Skeleton width="52%" height={50} />
+        <Skeleton width={90} height={14} />
+        <Skeleton height={6} className="card-skel-pill" />
       </div>
       <p className="small muted center" role="status">
         {label}

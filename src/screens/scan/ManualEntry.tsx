@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Icon } from '../../components/Icon';
 import { TopBar } from '../../components/TopBar';
 import { useStrings, type Strings } from '../../lib/i18n';
@@ -9,6 +9,9 @@ import { useOnline } from '../../lib/useOnline';
 type Key =
   | 'title'
   | 'unread'
+  | 'unreadTip'
+  | 'ocrUnavailable'
+  | 'ocrUnavailableText'
   | 'notFound'
   | 'notHere'
   | 'offline'
@@ -21,6 +24,8 @@ type Key =
   | 'number'
   | 'total'
   | 'optional'
+  | 'setExample'
+  | 'needNumber'
   | 'needMore'
   | 'find'
   | 'finding'
@@ -33,6 +38,9 @@ const STRINGS: Strings<Key> = {
   ko: {
     title: '번호로 찾기',
     unread: '음… 번호를 못 읽었어요 🤔',
+    unreadTip: '카드를 똑바로 세워서 네모에 꽉 차게 찍으면 더 잘 읽어요.',
+    ocrUnavailable: '앗, 번호 읽기 도구를 못 불러왔어요',
+    ocrUnavailableText: '인터넷이 잘 될 때 다시 찍어 봐요. 지금은 아래에 번호를 직접 써 주세요.',
     notFound: '음… 카드를 못 찾았어요 🤔',
     notHere: '번호를 직접 써 볼까요?',
     offline: '인터넷이 없어요',
@@ -45,6 +53,8 @@ const STRINGS: Strings<Key> = {
     number: '번호',
     total: '전체',
     optional: '세트(sv8a 같은 글자)는 없어도 돼요',
+    setExample: '예: sv8a',
+    needNumber: '번호를 먼저 써 주세요',
     needMore: '세트나 / 뒤의 숫자도 써 주세요',
     find: '이 번호로 찾기',
     finding: '찾는 중…',
@@ -56,6 +66,9 @@ const STRINGS: Strings<Key> = {
   en: {
     title: 'Find by number',
     unread: "Hmm, couldn't read the number 🤔",
+    unreadTip: 'Tip: hold the card upright and make it fill the box.',
+    ocrUnavailable: "Oops, the number reader didn't load",
+    ocrUnavailableText: 'Try scanning again when the internet works. For now, type the number below.',
     notFound: "Hmm, can't find that card 🤔",
     notHere: "Let's type the number",
     offline: 'No internet',
@@ -68,6 +81,8 @@ const STRINGS: Strings<Key> = {
     number: 'Number',
     total: 'Total',
     optional: 'The set (letters like sv8a) is optional',
+    setExample: 'e.g. sv8a',
+    needNumber: 'Type the number first',
     needMore: 'Add the set or the number after the /',
     find: 'Find this number',
     finding: 'Searching…',
@@ -78,7 +93,8 @@ const STRINGS: Strings<Key> = {
   },
 };
 
-export type ManualReason = 'unread' | 'notFound' | 'notHere';
+/** 'ocrUnavailable': the OCR engine could not load (offline first scan, CDN down). */
+export type ManualReason = 'unread' | 'notFound' | 'notHere' | 'ocrUnavailable';
 
 /** "sv8a 084/187" from whatever was read; '' when nothing was. */
 function codeText({ setCode, number, total }: PrintedCode): string {
@@ -98,7 +114,7 @@ export interface ManualEntryProps {
   onByName: () => void;
 }
 
-type Status = 'idle' | 'finding' | 'noMatch' | 'failed';
+type Status = 'idle' | 'finding' | 'noMatch' | 'failed' | 'needNumber' | 'needMore';
 
 /** Not read / not found / not in the picker: type the printed number instead. */
 export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onByName }: ManualEntryProps) {
@@ -108,6 +124,8 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
   const [number, setNumber] = useState(code.number ?? '');
   const [total, setTotal] = useState(code.total ?? '');
   const [status, setStatus] = useState<Status>('idle');
+  const numberInput = useRef<HTMLInputElement>(null);
+  const totalInput = useRef<HTMLInputElement>(null);
   const read = codeText(code);
   const clean = (s: string) => s.trim().replace(/\s+/g, '');
   // A bare number matches hundreds of cards: it needs the set or the total to be found.
@@ -115,7 +133,14 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!ready || status === 'finding') return;
+    if (status === 'finding') return;
+    if (!ready) {
+      // Say what is missing and put the cursor there (the button stays tappable so a tap always answers).
+      const missingNumber = !clean(number);
+      setStatus(missingNumber ? 'needNumber' : 'needMore');
+      (missingNumber ? numberInput : totalInput).current?.focus();
+      return;
+    }
     (document.activeElement as HTMLElement | null)?.blur(); // close the iOS keyboard
     setStatus('finding');
     try {
@@ -137,8 +162,10 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
   };
 
   const title = online ? t(reason) : t('offline');
+  const text = !online ? t('offlineText') : reason === 'ocrUnavailable' ? t('ocrUnavailableText') : t('text');
   const message =
     status === 'noMatch' ? t('noMatch') : status === 'failed' ? (online ? t('failed') : t('offlineText')) : null;
+  const tip = status === 'needNumber' ? t('needNumber') : status === 'needMore' ? t('needMore') : null;
 
   return (
     <main className="screen scan-page">
@@ -148,8 +175,9 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
           {photo && <img src={photo} alt="" className="scan-manual-photo" />}
           <div className="stack-4 grow">
             <h2 className="h2">{title}</h2>
-            <p className="small muted">{online ? t('text') : t('offlineText')}</p>
+            <p className="small muted">{text}</p>
             {read && <p className="caption scan-read">{t('read', { code: read })}</p>}
+            {online && reason === 'unread' && <p className="caption muted">{t('unreadTip')}</p>}
           </div>
         </section>
 
@@ -171,7 +199,7 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
                 className="input"
                 value={setCode}
                 onChange={(e) => edit(setSetCode)(e.target.value)}
-                placeholder="sv8a"
+                placeholder={t('setExample')}
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
@@ -182,10 +210,11 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
             <label className="scan-field">
               <span className="caption muted">{t('number')}</span>
               <input
+                ref={numberInput}
                 className="input tabular"
                 value={number}
                 onChange={(e) => edit(setNumber)(e.target.value)}
-                placeholder="084"
+                placeholder="000"
                 inputMode="numeric"
                 autoComplete="off"
                 enterKeyHint="next"
@@ -197,23 +226,24 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
             <label className="scan-field">
               <span className="caption muted">{t('total')}</span>
               <input
+                ref={totalInput}
                 className="input tabular"
                 value={total}
                 onChange={(e) => edit(setTotal)(e.target.value)}
-                placeholder="187"
+                placeholder="000"
                 inputMode="numeric"
                 autoComplete="off"
                 enterKeyHint="search"
               />
             </label>
           </div>
-          <p className="caption muted">{clean(number) && !ready ? t('needMore') : t('optional')}</p>
-          {message && (
-            <p className="small scan-form-msg" role="alert">
-              {message}
+          <p className="caption muted">{clean(number) && !ready && !tip ? t('needMore') : t('optional')}</p>
+          {(message || tip) && (
+            <p className={tip ? 'small scan-form-msg scan-form-tip' : 'small scan-form-msg'} role="alert">
+              {message ?? tip}
             </p>
           )}
-          <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={!ready || status === 'finding'}>
+          <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={status === 'finding'}>
             {status === 'finding' ? (
               <span className="spinner scan-btn-spinner" aria-hidden="true" />
             ) : (

@@ -34,17 +34,11 @@ function useSubtitle(card: CardBrief): string | undefined {
   return useMemo(() => (card.lang === 'en' ? undefined : nameInUiLang(card.name, uiLang)), [card, uiLang]);
 }
 
-/** Card picture; newer JA sets have no pictures yet, so the code is printed on the card back to tell them apart. */
+/** Card picture; newer JA sets have no pictures yet, so CardImage prints the code on the card back instead. */
 function CandidateArt({ card }: { card: CardBrief }) {
   return (
     <span className="scan-cand-art">
-      <CardImage image={card.image} alt={card.name} size="thumb" />
-      {!card.image && (
-        <span className="scan-cand-code" aria-hidden="true">
-          {card.setId}
-          <b>{card.localId}</b>
-        </span>
-      )}
+      <CardImage image={card.image} alt={card.name} size="thumb" code={{ set: card.setId, number: card.localId }} />
     </span>
   );
 }

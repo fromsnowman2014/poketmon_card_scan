@@ -88,16 +88,16 @@ beforeEach(async () => {
 });
 
 describe('settings', () => {
-  it('defaults from the browser language', async () => {
+  it('defaults from the browser language (Korean devices show won)', async () => {
     expect(peek(store.useSettings)).toEqual({
       uiLang: 'ko',
-      currency: 'USD',
+      currency: 'KRW',
       searchLang: 'ja',
       ebayWorkerUrl: '',
       theme: 'system',
     });
     await freshStore(new MemoryStorage(), 'en-US');
-    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', searchLang: 'en' });
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', currency: 'USD', searchLang: 'en' });
     expect(ls.length).toBe(0); // defaults are not written until something changes
   });
 
@@ -142,6 +142,22 @@ describe('collection', () => {
     expect(saved()[0]).toMatchObject({ qty: 2, priceUsd: 2.5, firstPriceUsd: 1.69 });
   });
 
+  it('remembers whether the saved price was converted from EUR (≈)', async () => {
+    const tcg: CardVariant = { ...variant('holo', 4), summary: { ...variant('holo', 4).summary!, source: 'tcgplayer', converted: false } };
+    const a = store.addToCollection(card(), 'normal');
+    const b = store.addToCollection(card('SV8a-002', [tcg]), 'holo');
+    const c = store.addToCollection(card('SV8a-003', [variant('normal', null)]), 'normal');
+    const byKey = () => Object.fromEntries(saved().map((i) => [i.key, i.priceApprox]));
+    expect(byKey()).toEqual({ [a]: true, [b]: false, [c]: false });
+    store.updateCollectionPrice(a, 0.2);
+    store.updateCollectionPrice(c, 1, true);
+    expect(byKey()).toMatchObject({ [a]: false, [c]: true });
+    // Older saves without the flag still load.
+    ls.setItem('cc:collection', JSON.stringify({ v: 1, data: saved().map(({ priceApprox: _, ...rest }) => rest) }));
+    await reload();
+    expect(peek(store.useCollection)).toHaveLength(3);
+  });
+
   it('keeps newest first and stores null for unpriced variants', () => {
     store.addToCollection(card('SV8a-001'), 'normal');
     store.addToCollection(card('SV8a-002', [variant('normal', null)]), 'normal');
@@ -175,6 +191,32 @@ describe('collection', () => {
     const [itemB, itemA] = saved();
     expect(itemA).toMatchObject({ priceUsd: 0.5, firstPriceUsd: 0.12 });
     expect(itemB).toMatchObject({ priceUsd: 3, firstPriceUsd: 3 });
+  });
+
+  it('makes room by dropping cached API data rather than losing My Cards', async () => {
+    // 4 cached cards ≈ 2,800 bytes; the saved card (≈ 1,100 bytes) only fits once one is gone.
+    await freshStore(new MemoryStorage(3500));
+    const entry = (i: number) => JSON.stringify({ v: 'x'.repeat(300), exp: Date.now() + 60_000 + i });
+    for (let i = 0; i < 4; i++) ls.setItem(`cc:cache:card:ja:${i}`, entry(i));
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    store.addToCollection(card(), 'normal');
+    expect(JSON.parse(ls.getItem('cc:collection')!).data).toHaveLength(1);
+    expect(ls.getItem('cc:cache:card:ja:0')).toBeNull(); // oldest went first
+    expect(ls.getItem('cc:cache:card:ja:3')).not.toBeNull();
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it('tells listeners when My Cards could not be saved at all', async () => {
+    await freshStore(new MemoryStorage(10));
+    const failed = vi.fn();
+    const off = store.onCollectionSaveFailed(failed);
+    store.addToCollection(card(), 'normal');
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(peek(store.useCollection)).toHaveLength(1); // still shown for this session
+    off();
+    store.addToCollection(card(), 'normal');
+    expect(failed).toHaveBeenCalledTimes(1);
   });
 
   it('collectionTotalUsd multiplies by quantity and ignores unpriced cards', () => {
@@ -227,6 +269,13 @@ describe('history', () => {
     expect(items[0]).not.toHaveProperty('variants');
   });
 
+  it('keeps the ≈ flag only for a known price', () => {
+    store.pushHistory(card('SV8a-001'), 1, true);
+    store.pushHistory(card('SV8a-002'), null, true);
+    const items = JSON.parse(ls.getItem('cc:history')!).data as import('./types').HistoryItem[];
+    expect(items.map((h) => h.priceApprox)).toEqual([false, true]);
+  });
+
   it('clearHistory empties it', () => {
     store.pushHistory(card(), 1);
     store.clearHistory();
@@ -235,26 +284,47 @@ describe('history', () => {
 });
 
 describe('snapshots', () => {
-  const saved = () => JSON.parse(ls.getItem('cc:snapshots')!).data as { date: string; totalUsd: number }[];
+  type Saved = import('./types').ValueSnapshot;
+  const saved = () => JSON.parse(ls.getItem('cc:snapshots')!).data as Saved[];
+  const item = (key: string, priceUsd: number | null, qty = 1) =>
+    ({ key, priceUsd, qty }) as import('./types').CollectionItem;
 
-  it('upserts one snapshot per local day, oldest first, max 120', () => {
+  it('upserts one snapshot per local day with each card\'s price and quantity, oldest first, max 120', () => {
     vi.useFakeTimers();
     const start = new Date(2026, 0, 1, 12);
     for (let d = 0; d < 125; d++) {
       vi.setSystemTime(new Date(start.getTime() + d * 86_400_000));
-      store.recordSnapshot(d);
-      store.recordSnapshot(d + 0.5);
+      store.recordSnapshot([item('a', d)]);
+      store.recordSnapshot([item('a', d + 0.5), item('b', null)]);
     }
     const list = saved();
     expect(peek(store.useSnapshots)).toEqual(list);
     expect(list).toHaveLength(120);
     expect(list[0]).toEqual({ date: '2026-01-06', totalUsd: 5.5 });
-    expect(list[119]).toEqual({ date: '2026-05-05', totalUsd: 124.5 });
+    // Per-card data only where it can still be the "a week ago" baseline: the last 7 days + the newest older one.
+    expect(list.filter((s) => s.cards).map((s) => s.date)).toEqual(
+      ['2026-04-28', '2026-04-29', '2026-04-30', '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05'],
+    );
+    expect(list[119]).toEqual({ date: '2026-05-05', totalUsd: 124.5, cards: { a: [124.5, 1] } }); // unpriced b left out
   });
 
-  it('ignores non-finite totals', () => {
-    store.recordSnapshot(Number.NaN);
-    expect(ls.getItem('cc:snapshots')).toBeNull();
+  it('records quantity changes even when the total stays the same', () => {
+    store.recordSnapshot([item('a', 2, 1), item('b', 1, 2)]);
+    store.recordSnapshot([item('a', 2, 2)]); // still $4 in total
+    expect(saved()).toHaveLength(1);
+    expect(saved()[0]).toEqual({ date: expect.any(String), totalUsd: 4, cards: { a: [2, 2] } });
+  });
+
+  it('reads old snapshots without per-card data and drops a malformed cards map', async () => {
+    ls.setItem(
+      'cc:snapshots',
+      JSON.stringify({ v: 1, data: [{ date: '2026-11-01', totalUsd: 3 }, { date: '2026-11-02', totalUsd: 4, cards: { a: ['x', 1] } }, { date: 'bad', totalUsd: 1 }] }),
+    );
+    await reload();
+    expect(peek(store.useSnapshots)).toEqual([
+      { date: '2026-11-01', totalUsd: 3 },
+      { date: '2026-11-02', totalUsd: 4 },
+    ]);
   });
 });
 
@@ -265,13 +335,13 @@ describe('resetAllData', () => {
     store.setCollectionThumb(key, 'data:x');
     store.rememberScanPhoto('SV8a-084', 'data:y');
     store.pushHistory(card(), 1);
-    store.recordSnapshot(5);
+    store.recordSnapshot(peek(store.useCollection));
     ls.setItem('cc:cache:fx:usd', '{"v":1}');
 
     store.resetAllData();
 
     const data = (k: string) => JSON.parse(ls.getItem(k)!).data;
-    expect(data('cc:settings').currency).toBe('USD');
+    expect(data('cc:settings').currency).toBe('KRW'); // the Korean default
     expect(data('cc:collection')).toEqual([]);
     expect(data('cc:thumbs')).toEqual({});
     expect(data('cc:history')).toEqual([]);
