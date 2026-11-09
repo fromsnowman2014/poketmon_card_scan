@@ -184,13 +184,18 @@ export function PriceHero({ summary, tier, variantName, ebayTarget }: PriceHeroP
         <Money usd={market} approx={converted} secondary animate className="price-xl card-price-value" />
       </div>
       <PriceRange summary={summary} />
-      <p className="caption muted card-price-source">{when ? t('sourceUpdated', { source, when }) : source}</p>
       {ebayTarget && (
+        // Part of the first view (its text carries FOLD_ATTR, so the art leaves room for it): kids should know
+        // eBay prices are further down without scrolling. CSS draws it under the source line; on phones up to 800px
+        // tall (iPhone SE) it comes first, right under the low–high row, and the source line follows it.
         <button type="button" className="card-ebay-jump" onClick={() => goTo(ebayTarget)}>
-          {t('ebayBelow')}
-          <span aria-hidden="true">↓</span>
+          <span className="card-ebay-jump-text" {...fold}>
+            {t('ebayBelow')}
+            <span aria-hidden="true"> ↓</span>
+          </span>
         </button>
       )}
+      <p className="caption muted card-price-source">{when ? t('sourceUpdated', { source, when }) : source}</p>
     </section>
   );
 }

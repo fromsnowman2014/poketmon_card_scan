@@ -1,14 +1,15 @@
-import { nameInUiLang } from '../../lib/localName';
-import { translateCardName } from '../../lib/names';
 import type { CollectionItem, UiLang } from '../../lib/types';
+import { cardNames } from '../card/format';
 
 /**
- * The card's name in the UI language when it differs from the printed one ("ルチャブル" → "루차불"), so a kid
- * can read their Japanese cards. Some new JA cards come without dexIds; their species is found from the name.
+ * A saved card's name and the line under it, exactly as its Card screen title shows them (format.cardNames), so a
+ * card reads the same in My Cards as on its own page: JA cards lead with the UI-language name ("루차불" /
+ * "Hawlucha") over the printed one ("ルチャブル"); EN cards keep the English name (+ the Korean one in the Korean
+ * UI). Saved cards have no HP, so a card without dexIds is matched by its name (localName.nameInUiLang).
  */
-export function uiName(item: Pick<CollectionItem, 'name' | 'dexIds'>, lang: UiLang): string | undefined {
-  const translated = item.dexIds?.length
-    ? translateCardName(item.name, item.dexIds, lang)
-    : nameInUiLang(item.name, lang);
-  return translated && translated !== item.name ? translated : undefined;
+export function itemNames(
+  item: Pick<CollectionItem, 'name' | 'dexIds' | 'lang'>,
+  uiLang: UiLang,
+): { title: string; subtitle?: string } {
+  return cardNames({ name: item.name, dexIds: item.dexIds ?? [] }, item.lang, uiLang);
 }

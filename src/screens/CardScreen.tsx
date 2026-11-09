@@ -5,11 +5,12 @@ import { cx } from '../components/cx';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { Sheet } from '../components/Sheet';
+import { useValueTier } from '../components/TierBadge';
 import { TopBar } from '../components/TopBar';
 import { ebayQuery } from '../lib/ebay';
 import { useRates } from '../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
-import { applyRates, valueTier } from '../lib/pricing';
+import { applyRates } from '../lib/pricing';
 import { Link, useRoute } from '../lib/router';
 import { getScanPhoto, pushHistory, updateCollectionPrice, useCollection, useSettings } from '../lib/store';
 import { splitCardId } from '../lib/tcgdex';
@@ -151,6 +152,8 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
   // getCard converts EUR prices with the rates it had at hand (maybe last week's or the built-in ones); redo it
   // when live rates arrive so the price, the saved copy and the history all use the same numbers.
   const card = useMemo(() => applyRates(fetched, rates), [fetched, rates]);
+  // Tiers in the money shown: 5,000원 makes a 💎 용돈 카드 for a kid who sees won, $5 for one who sees dollars.
+  const tierOf = useValueTier();
   const [variantKey, setVariantKey] = useState(card.defaultVariant);
   const [zoomed, setZoomed] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -158,7 +161,7 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
   // Decided once on arrival: switching variants later shouldn't throw confetti again.
   const [celebrate] = useState(() => {
     const market = priceOf(card, card.defaultVariant);
-    return fromScan && market !== null && CELEBRATE.has(valueTier(market));
+    return fromScan && market !== null && CELEBRATE.has(tierOf(market));
   });
 
   useEffect(() => {
@@ -169,7 +172,7 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
 
   const variant = card.variants.find((v) => v.key === variantKey) ?? card.variants[0];
   const market = variant.summary?.market ?? null;
-  const tier = market === null ? null : valueTier(market);
+  const tier = market === null ? null : tierOf(market);
   const { title, subtitle } = cardNames(card, lang, uiLang);
   // Korean cards carry Japanese data, but the eBay query must say "Korean"; the English name needs the species.
   const query = useMemo(

@@ -84,6 +84,7 @@ npx wrangler@4 secret put EBAY_CLIENT_SECRET   # Cert ID 붙여넣기
 
 - `https://cardcheck-ebay.<내이름>.workers.dev/` → `{"name":"cardcheck-ebay","ok":true,"configured":true}` 가 보이면 성공!
 - `https://cardcheck-ebay.<내이름>.workers.dev/ebay?q=Pikachu` → 경매 / 즉시구매 목록(JSON)이 보여요.
+- 한국에 산다면 `…/ebay?q=Pikachu&country=KR` → `"shipTo":"KR"`이 보이면 한국 배송비로 계산하는 새 버전이에요.
 
 ## 7단계 — 앱에 주소 붙여넣기
 
@@ -116,6 +117,7 @@ npx wrangler@4 secret put EBAY_CLIENT_SECRET   # Cert ID 붙여넣기
 | `ebay_unavailable` + `browse 403`/`429` | eBay 쪽 권한 또는 하루 호출 한도 문제예요. 잠시 뒤 다시 해 봐요. |
 | `rate_limited` (429) | 1분에 30번 넘게 물어봤어요. 1분 뒤에 다시 돼요. |
 | `origin_not_allowed` (403) | `ALLOWED_ORIGIN`에 앱 주소가 빠졌어요. 쉼표로 추가하고 다시 deploy 해요. |
+| 한국에 사는데 eBay 칸에 "미국 eBay 가격이에요 · 한국으로 받으면 배송비가 더 들어요"가 계속 보여요 | 워커가 예전 버전이라 한국 배송비를 몰라요. 아래 "코드를 업데이트하고 싶어요"처럼 다시 deploy 하면 "배송비는 한국까지 기준이에요"로 바뀌어요. |
 | 앱에서 eBay 가격이 안 보여요 | 설정의 주소에 오타가 없는지, 6단계 주소가 사파리에서 열리는지 확인해요. 앱은 실패해도 eBay 검색 링크를 보여 줘요. |
 | 코드를 업데이트하고 싶어요 | 새 ZIP을 받아 그 `worker` 폴더에서 `npx wrangler@4 deploy` (git을 쓰면 `git pull` 후). `ALLOWED_ORIGIN`을 바꿨었다면 새 `wrangler.toml`에도 다시 적어요. 비밀 키는 다시 넣을 필요 없어요. |
 | 워커를 지우고 싶어요 | `npx wrangler@4 delete` |
@@ -123,8 +125,11 @@ npx wrangler@4 secret put EBAY_CLIENT_SECRET   # Cert ID 붙여넣기
 ## 알아 두면 좋은 점
 
 - 같은 검색은 10분 동안 저장해 두고 다시 써서 eBay 호출을 아껴요.
-- 즉시구매 **최저가와 보통 가격은 배송비를 더한 값**이에요 (미국 주소 기준). 0.99달러 카드에 배송비 4.50달러면 5.49달러로 쳐요.
-  한국으로 보내면 배송비가 더 들어요.
+- 즉시구매 **최저가와 보통 가격은 배송비를 더한 값**이에요. 0.99달러 카드에 배송비 4.50달러면 5.49달러로 쳐요.
+- 배송비는 **아이가 사는 곳** 기준이에요 (앱 설정의 나라). 미국이면 미국 주소(뉴욕 10001)까지,
+  한국이면 앱이 `&country=KR`을 붙여서 서울(우편번호 04524)까지 배송비로 계산하고, **한국으로 배송되는 매물만** 보여 줘요.
+  eBay가 한국 배송비를 알려 주지 않는 매물(계산 배송)은 앱에 "배송비 별도"로 보여요. 해외 배송비가 공짜인 경우는 거의 없으니
+  배송비를 아는 매물이 3개 이상이면 "최저가"와 "보통 가격"은 그 매물들로만 계산해요. 미국과 한국 결과는 따로 저장해요.
 - 보통 가격은 즉시구매 매물 최대 50개의 가운데 값이에요. 매물이 50개보다 많은 인기 카드는 eBay 추천순 50개로 한 번 더 찾아서 계산해요.
   (가장 싼 50개만 보면 "보통"이 너무 낮게 나와서요.)
 - 그레이딩 카드(PSA, BGS, CGC…)와 프록시 · 커스텀 · 묶음(lot) · "설명 꼭 읽으세요" 같은 매물은 빼고 보여 줘요.
@@ -137,7 +142,7 @@ npx wrangler@4 secret put EBAY_CLIENT_SECRET   # Cert ID 붙여넣기
 | 요청 | 응답 |
 |---|---|
 | `GET /` | `{ name, ok, configured }` |
-| `GET /ebay?q=<검색어>[&graded=1]` | `EbaySummary` (`src/lib/types.ts`): `{ query, fetchedAt, auctions: { count, items }, buyNow: { count, lowest, median, lowestShipping, items }, searchUrl, soldUrl }`. `lowest`/`median`은 배송비 포함 합계(USD), `lowestShipping`은 최저가 매물의 배송비(0 = 무료, `null` = 모름). `items`는 합계가 싼 순서. |
+| `GET /ebay?q=<검색어>[&graded=1][&country=KR]` | `EbaySummary` (`src/lib/types.ts`): `{ query, shipTo, fetchedAt, auctions: { count, items }, buyNow: { count, lowest, median, lowestShipping, items }, searchUrl, soldUrl }`. `lowest`/`median`은 배송비 포함 합계(USD), `lowestShipping`은 최저가 매물의 배송비(0 = 무료, `null` = 모름). `items`는 합계가 싼 순서. `country`는 `KR`(대소문자 상관없음)만 알아듣고, 없거나 다른 값이면 `US`예요. `shipTo`는 실제로 쓴 나라(`"US"` / `"KR"`). |
 | 오류 | `400 missing_q`, `400 q_too_long` (공백 정리 후 120자 초과), `403 origin_not_allowed`, `404 not_found`, `429 rate_limited` (+ `Retry-After`), `500 not_configured`, `502 ebay_unavailable` (오류에는 대부분 `searchUrl` 포함) |
 
 테스트(인터넷 필요 없음): `node worker/test.mjs`
@@ -172,7 +177,8 @@ Why a worker? The eBay Browse API can't be called from a browser (no CORS), and 
    ```
 
    Answer `y` if npx asks to install wrangler. If asked to pick a *workers.dev subdomain* on the first deploy, type any name.
-6. **Check** — open `https://cardcheck-ebay.<you>.workers.dev/`; you should see `"configured":true`. Try `/ebay?q=Pikachu`.
+6. **Check** — open `https://cardcheck-ebay.<you>.workers.dev/`; you should see `"configured":true`. Try `/ebay?q=Pikachu`
+   (and `/ebay?q=Pikachu&country=KR`, which should say `"shipTo":"KR"`).
 7. **Paste the URL in the app** — CardCheck → **Settings** → **eBay worker URL**.
 
 **Keep the worker address private.** Anyone who knows it can query it. The worker answers at most **30 requests per minute per IP address**
@@ -187,10 +193,17 @@ or run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once. `configured:f
 `origin_not_allowed` (403) → add the app's address to `ALLOWED_ORIGIN`. To update the worker, download a new ZIP and run `npx wrangler@4 deploy`
 in its `worker` folder (re-apply your `ALLOWED_ORIGIN`; secrets stay). The app always falls back to plain eBay search links.
 
-Notes: results are cached for 10 minutes. Buy It Now `lowest` and `median` are **totals including US shipping** (a $0.99 card with $4.50 shipping
-counts as $5.49; shipping to Korea costs more), and `lowestShipping` is the shipping part of the lowest one (0 = free, null = unknown).
+Notes: results are cached for 10 minutes. Buy It Now `lowest` and `median` are **totals including shipping** (a $0.99 card with $4.50 shipping
+counts as $5.49), and `lowestShipping` is the shipping part of the lowest one (0 = free, null = unknown).
+Shipping goes to **where the kid lives** (the app's country setting): a US address (New York 10001) by default; for a kid in Korea the app adds
+`&country=KR`, and the worker prices shipping to Seoul (postcode 04524) and keeps **only listings that ship to Korea** (eBay's `deliveryCountry`
+filter). Listings without a Korean shipping price (calculated shipping) show as "+ shipping". Once at least 3 listings have a known price to
+Korea, those sort first and alone set the lowest and typical price (international shipping is rarely free); with fewer, listings are ranked by price. `country` only understands `KR` (any case); anything
+else is `US`. The response echoes it as `shipTo` (`"US"` / `"KR"`; older workers leave it out and the app treats that as US), and US and Korean
+results are cached separately. A Korean kid with an older worker sees "Prices from eBay US · Shipping to Korea costs extra": redeploy to fix it.
 The median uses up to 50 Buy It Now listings; for popular cards with more than 50, it comes from a second, Best Match sample so it isn't just the
 cheapest few. Graded slabs, proxies, customs, lots and "read description" listings are filtered out (a query that names PSA etc., or `&graded=1`,
 keeps graded). Sold prices have no free eBay API, so the app links to eBay's sold search instead. The worker stores no personal data.
+API: `GET /ebay?q=<keywords>[&graded=1][&country=KR]` → `{ query, shipTo, fetchedAt, auctions, buyNow, searchUrl, soldUrl }`.
 Errors: `400 missing_q` / `q_too_long` (over 120 characters), `403 origin_not_allowed`, `404 not_found`, `429 rate_limited` (+ `Retry-After`),
 `500 not_configured`, `502 ebay_unavailable`. Offline test: `node worker/test.mjs`.

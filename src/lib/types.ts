@@ -10,6 +10,12 @@ export type UiLang = 'ko' | 'en';
 /** Currency used for display. All prices are stored internally in USD. */
 export type DisplayCurrency = 'USD' | 'KRW';
 
+/**
+ * Where the kid lives (not the UI language): picks the default money (US → dollars, KR → won), the default card
+ * search language, price-tier thresholds that feel right in that money, and where eBay shipping is estimated to.
+ */
+export type Country = 'US' | 'KR';
+
 /** Light-weight card reference (search results, scan candidates, history). */
 export interface CardBrief {
   /** TCGdex card id, e.g. "SV8a-084" (ja), "sv08.5-084" (en). */
@@ -177,6 +183,11 @@ export interface EbaySummary {
   buyNow: { count: number; lowest: number | null; median: number | null; lowestShipping?: number | null; items: EbayListing[] };
   searchUrl: string;
   soldUrl?: string;
+  /**
+   * Where the shipping in these totals goes (the worker's echo of `&country=`). fetchEbaySummary always fills it:
+   * an older worker that doesn't send it priced shipping to the US, so it reads as 'US'.
+   */
+  shipTo?: Country;
 }
 
 /** A card saved in "My Cards". */
@@ -218,6 +229,9 @@ export interface HistoryItem extends CardBrief {
 
 export interface Settings {
   uiLang: UiLang;
+  /** Where the kid lives (region.detectCountry on first launch). Changing it resets currency and searchLang to its defaults. */
+  country: Country;
+  /** Defaults to the country's money (US → USD, KR → KRW); can be overridden. */
   currency: DisplayCurrency;
   /** Default language used when searching by name. */
   searchLang: CardLang;

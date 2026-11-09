@@ -35,14 +35,14 @@ export function TierBar({ counts, unpriced }: TierBarProps) {
         {TIER_ORDER.map((tier) => (
           <li key={tier} className={cx(`tier-${tier}`, counts[tier] === 0 && 'collection-legend-zero')}>
             <span aria-hidden="true">{TIER_EMOJI[tier]}</span>
-            <span className="grow truncate">{label(tier)}</span>
+            <span className="grow collection-legend-name">{label(tier)}</span>
             <b className="tier-text tabular">{t('count', { n: counts[tier] })}</b>
           </li>
         ))}
         {unpriced > 0 && (
           <li>
             <span aria-hidden="true">🔍</span>
-            <span className="grow truncate">{t('mystery')}</span>
+            <span className="grow collection-legend-name">{t('mystery')}</span>
             <b className="tabular">{t('count', { n: unpriced })}</b>
           </li>
         )}

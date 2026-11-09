@@ -195,6 +195,20 @@
   font-weight: 800;
 }
 
+/* Wraps rather than cutting "Pocket change" to "Pocket chan…" on a 375px phone. */
+.collection-legend-name {
+  min-width: 0;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+/* On the narrowest phones a smaller gap keeps "Allowance" whole (it would break as "Allowanc / e"). */
+@media (max-width: 340px) {
+  .collection-legend {
+    column-gap: 8px;
+  }
+}
+
 .collection-legend-zero {
   opacity: 0.45;
 }

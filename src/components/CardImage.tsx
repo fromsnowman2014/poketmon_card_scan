@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { cardImage } from '../lib/tcgdex';
 import type { ValueTier } from '../lib/types';
-import { nextAfterError, noteLoaded, startState, type ImageState } from './cardImageChain';
+import { nextAfterError, startState, type ImageState } from './cardImageChain';
 import { cx } from './cx';
 import './CardImage.css';
 
@@ -82,17 +82,14 @@ export function CardImage({ image, fallback, photo, alt, size = 'full', tier, ea
           key={`${src}|${cors ? 'cors' : 'plain'}`}
           src={src}
           // TCGdex sends CORS headers: a CORS response can be cached by the service worker for offline use.
-          // The TCGplayer fallback has none, so it loads as a plain image, and so do Japanese TCGdex images once
-          // one of them needed the plain retry this session (their CORS header is broken, see cardImageChain).
+          // The TCGplayer fallback has none, so it loads as a plain image, and so do Japanese TCGdex images (their
+          // CORS header comes twice, which browsers reject; see cardImageChain).
           crossOrigin={cors ? 'anonymous' : undefined}
           alt={alt}
           loading={eager ? 'eager' : 'lazy'}
           decoding="async"
           draggable={false}
-          onLoad={() => {
-            noteLoaded(current, src);
-            setState((s) => (s.loaded ? s : { ...s, loaded: true }));
-          }}
+          onLoad={() => setState((s) => (s.loaded ? s : { ...s, loaded: true }))}
           onError={() => setState((s) => nextAfterError(s, s.index === 0 && tcgdexSrc !== undefined))}
         />
       )}

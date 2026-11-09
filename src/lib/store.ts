@@ -2,11 +2,13 @@
 // Each key holds a versioned envelope { v, data }; anything unreadable falls back to defaults.
 import { useSyncExternalStore } from 'react';
 import { clearCache, writeWithRoom } from './cache';
+import { COUNTRIES, countryDefaults, guessCountry } from './region';
 import type {
   CardBrief,
   CardDetail,
   CardLang,
   CollectionItem,
+  Country,
   HistoryItem,
   Settings,
   UiLang,
@@ -113,19 +115,42 @@ function useStore<T>(store: Persisted<T>): T {
 
 // ---------- Settings ----------
 
-/** Korean devices start in Korean with prices in won (kids read "₩" amounts), others in English with dollars. */
+/**
+ * The UI language follows the phone's language; the money and the card search language follow where the kid lives
+ * (region.guessCountry: time zone, then language region). A Korean phone in Seoul starts with 한국어 + 원, an English
+ * phone in the US with English + dollars, a Korean-speaking kid in the US with 한국어 + dollars.
+ */
 function defaultSettings(): Settings {
   const nav = typeof navigator !== 'undefined' ? navigator.language ?? '' : '';
   const uiLang: UiLang = nav.toLowerCase().startsWith('ko') ? 'ko' : 'en';
-  const ko = uiLang === 'ko';
-  return { uiLang, currency: ko ? 'KRW' : 'USD', searchLang: ko ? 'ja' : 'en', ebayWorkerUrl: '', theme: 'system' };
+  const country = guessCountry().country;
+  return { uiLang, country, ...countryDefaults(country), ebayWorkerUrl: '', theme: 'system' };
 }
 
-/** Valid fields of `raw`, others from `d`. */
+/**
+ * What the app saved before `country` existed when nobody picked the money or search language: both followed the
+ * phone's language (Korean phone → won + 日本語 search, others → dollars + English), and the whole settings object was
+ * saved whenever any setting changed, so a saved value equal to this default says nothing about the kid.
+ */
+function legacyDefaults(): Pick<Settings, 'currency' | 'searchLang'> {
+  const nav = typeof navigator !== 'undefined' ? navigator.language ?? '' : '';
+  return nav.toLowerCase().startsWith('ko') ? { currency: 'KRW', searchLang: 'ja' } : { currency: 'USD', searchLang: 'en' };
+}
+
+/**
+ * Valid fields of `raw`, others from `d`. Settings saved before `country` existed get the detected country; their saved
+ * money and search language are kept only when they differ from what the old app saved by default (a real pick).
+ */
 function loadSettings(raw: unknown, d: Settings = defaultSettings()): Settings {
-  const r = isObj(raw) ? raw : {};
+  const r = isObj(raw) ? { ...raw } : {};
+  if (!('country' in r)) {
+    const legacy = legacyDefaults();
+    if (r.currency === legacy.currency) delete r.currency;
+    if (r.searchLang === legacy.searchLang) delete r.searchLang;
+  }
   return {
     uiLang: oneOf(r.uiLang, ['ko', 'en'], d.uiLang),
+    country: oneOf(r.country, COUNTRIES, d.country),
     currency: oneOf(r.currency, ['USD', 'KRW'], d.currency),
     searchLang: oneOf(r.searchLang, LANGS, d.searchLang),
     ebayWorkerUrl: isStr(r.ebayWorkerUrl) ? r.ebayWorkerUrl.trim() : d.ebayWorkerUrl,
@@ -133,15 +158,64 @@ function loadSettings(raw: unknown, d: Settings = defaultSettings()): Settings {
   };
 }
 
-const settings = persisted('cc:settings', loadSettings);
+const SETTINGS_KEY = 'cc:settings';
+const COUNTRY_ASKED_KEY = 'cc:country-asked';
+
+/**
+ * The first guess is saved right away, so the country means where the kid was when the app first opened: a Seoul kid
+ * on holiday in Hawaii keeps seeing won. Settings (or the first-launch question) is the way to change it. A confident
+ * guess also counts as the country question answered, so it isn't asked abroad either. Best effort and never in the
+ * way: no cached data is dropped to make room during a render, and a saved value this version can't read (corrupt,
+ * or from a newer app) is left alone.
+ */
+function saveFirstGuess(raw: unknown, loaded: Settings): void {
+  if (isObj(raw) ? COUNTRIES.includes(raw.country as Country) : raw !== undefined) return;
+  try {
+    const s = storage();
+    if (!s || (raw === undefined && s.getItem(SETTINGS_KEY) !== null)) return;
+    s.setItem(SETTINGS_KEY, JSON.stringify({ v: VERSION, data: loaded }));
+    if (guessCountry().confident) s.setItem(COUNTRY_ASKED_KEY, JSON.stringify({ v: VERSION, data: true }));
+  } catch {
+    // full or blocked storage: the guess is made again next launch
+  }
+}
+
+const settings = persisted(SETTINGS_KEY, (raw) => {
+  const loaded = loadSettings(raw);
+  saveFirstGuess(raw, loaded);
+  return loaded;
+});
 
 export function useSettings(): Settings {
   return useStore(settings);
 }
 
+/**
+ * Changing `country` also switches the money and the search language to that country's defaults, unless the same
+ * patch sets them. Picking a country (here or in the first-launch question) counts as answering that question.
+ */
 export function updateSettings(patch: Partial<Settings>): void {
   const current = settings.get();
-  settings.set(loadSettings({ ...current, ...patch }, current));
+  const moved = patch.country !== undefined && patch.country !== current.country && COUNTRIES.includes(patch.country);
+  const next = moved ? { ...current, ...countryDefaults(patch.country!), ...patch } : { ...current, ...patch };
+  settings.set(loadSettings(next, current));
+  if (patch.country !== undefined) markCountryAsked();
+}
+
+// ---------- First-launch country question ----------
+
+/**
+ * True when the app should ask "Where do you live? 🇺🇸 / 🇰🇷" once: the phone gave no US/Korea time zone or
+ * language region (region.guessCountry was not confident), nobody picked a country yet, and the saved first guess
+ * wasn't a confident one (saveFirstGuess).
+ */
+export function needsCountryPrompt(): boolean {
+  return readKey(COUNTRY_ASKED_KEY) !== true && !guessCountry().confident;
+}
+
+/** Remembers that the country question was answered (or dismissed: the guess is kept and can be changed in Settings). */
+export function markCountryAsked(): void {
+  writeKey(COUNTRY_ASKED_KEY, true);
 }
 
 // ---------- My Cards ----------
@@ -482,6 +556,11 @@ export function recordSnapshot(items: readonly CollectionItem[]): void {
 /** Forgets everything: settings, My Cards (+ photos), history, snapshots and cached API data. */
 export function resetAllData(): void {
   settings.set(defaultSettings());
+  try {
+    storage()?.removeItem(COUNTRY_ASKED_KEY);
+  } catch {
+    // blocked storage: keep clearing the rest
+  }
   collection.set([]);
   thumbs.set({});
   recent.set([]);

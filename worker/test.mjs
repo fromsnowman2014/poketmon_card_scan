@@ -2,7 +2,14 @@
 // Run: node worker/test.mjs
 import assert from "node:assert/strict";
 
-globalThis.caches = { default: { match: async () => undefined, put: async () => {} } };
+// Records the Cache API keys the worker uses (the country must be part of them).
+const cacheKeys = { match: [], put: [] };
+globalThis.caches = {
+  default: {
+    match: async (req) => void cacheKeys.match.push(new URL(req.url)),
+    put: async (req) => void cacheKeys.put.push(new URL(req.url)),
+  },
+};
 
 const AUCTIONS = [
   { title: "Hawlucha 084/187 sv8a Japanese Pokemon", price: { value: "1.00", currency: "USD" }, currentBidPrice: { value: "2.50", currency: "USD" }, bidCount: 3, itemEndDate: "2026-11-09T01:00:00.000Z", buyingOptions: ["AUCTION"], itemWebUrl: "https://www.ebay.com/itm/1", image: { imageUrl: "https://i.ebayimg.com/a.jpg" }, condition: "Ungraded" },
@@ -22,6 +29,17 @@ const BUY_NOW = [
   // No shippingOptions (calculated shipping): counted as price only, lowestShipping would be null.
   { title: "Hawlucha 084/187 Japanese", price: { value: "2.50", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/12" },
 ];
+// The same search seen from Seoul (deliveryCountry:KR): eBay prices shipping to Korea, sometimes several ways.
+const BUY_NOW_KR = [
+  { title: "Hawlucha sv8a 084/187 from Japan", price: { value: "1.50", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/k1", shippingOptions: [{ shippingCost: { value: "9.00", currency: "USD" } }, { shippingCost: { value: "3.00", currency: "USD" } }] },
+  { title: "Hawlucha 084/187 Japanese NM", price: { value: "0.99", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/k2", shippingOptions: [{ shippingCost: { value: "12.00", currency: "USD" } }] },
+  // Calculated shipping: eBay gives no cost for Korea, so shipping stays unknown (null), never 0.
+  { title: "Hawlucha 084/187 sv8a", price: { value: "2.00", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/k3", shippingOptions: [{ shippingCostType: "CALCULATED" }] },
+  // A cost in another money can't be added to a dollar price: unknown too.
+  { title: "Hawlucha 084/187 Terastal", price: { value: "3.00", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/k4", shippingOptions: [{ shippingCost: { value: "5000", currency: "KRW" } }] },
+  { title: "Hawlucha 084/187 SV8a mint", price: { value: "4.00", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/k5", shippingOptions: [{ shippingCost: { value: "6.00", currency: "USD" } }] },
+];
+
 // Best Match sample for a popular card (asked for only when there are more listings than one page).
 const BEST_MATCH = [3, 4, 5, 6, 7].map((v, i) => ({
   title: `Hawlucha 084/187 copy ${i}`, price: { value: v.toFixed(2), currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
@@ -32,8 +50,8 @@ const BEST_MATCH = [3, 4, 5, 6, 7].map((v, i) => ({
  * Installs a fake eBay. `failToken`: token endpoint returns 401; `expireOnce`: first search returns 401;
  * `binTotal`: eBay's total for Buy It Now (more than one page triggers the Best Match sample).
  */
-function fakeEbay({ failToken = false, expireOnce = false, binTotal } = {}) {
-  const calls = { token: 0, search: 0, searches: [] };
+function fakeEbay({ failToken = false, expireOnce = false, binTotal, krBuyNow = BUY_NOW_KR } = {}) {
+  const calls = { token: 0, search: 0, searches: [], ctx: [], filters: [] };
   let tokens = 0;
   globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -47,11 +65,15 @@ function fakeEbay({ failToken = false, expireOnce = false, binTotal } = {}) {
     if (expireOnce && calls.search === 1) return new Response("expired", { status: 401 });
     assert.match(init.headers.Authorization, /^Bearer TOK\d$/);
     assert.equal(url.searchParams.get("category_ids"), "183454");
+    calls.ctx.push(init.headers["X-EBAY-C-ENDUSERCTX"]);
+    calls.filters.push(url.searchParams.get("filter"));
+    const korea = init.headers["X-EBAY-C-ENDUSERCTX"].includes("country%3DKR");
     const auction = url.searchParams.get("filter").includes("AUCTION");
     const sort = url.searchParams.get("sort");
     calls.searches.push(`${auction ? "AUCTION" : "FIXED_PRICE"}:${sort ?? "bestMatch"}:${url.searchParams.get("limit")}`);
     if (auction) return Response.json({ total: AUCTIONS.length, itemSummaries: AUCTIONS });
     if (!sort) return Response.json({ total: binTotal, itemSummaries: BEST_MATCH });
+    if (korea) return Response.json({ total: krBuyNow.length, itemSummaries: krBuyNow });
     return Response.json({ total: binTotal ?? BUY_NOW.length, itemSummaries: BUY_NOW });
   };
   return calls;
@@ -90,8 +112,11 @@ await test("summarizes auctions and Buy It Now listings", async () => {
   assert.equal(res.headers.get("vary"), "Origin");
   assert.equal(res.headers.get("x-cache"), "MISS");
   const body = await res.json();
-  assert.deepEqual(Object.keys(body).sort(), ["auctions", "buyNow", "fetchedAt", "query", "searchUrl", "soldUrl"]);
+  assert.deepEqual(Object.keys(body).sort(), ["auctions", "buyNow", "fetchedAt", "query", "searchUrl", "shipTo", "soldUrl"]);
   assert.equal(body.query, "Hawlucha sv8a 084/187 Japanese");
+  assert.equal(body.shipTo, "US", "no country: shipping to the US, as before");
+  assert.deepEqual(calls.ctx, Array(2).fill("contextualLocation=country%3DUS%2Czip%3D10001"));
+  assert.deepEqual(calls.filters, ["buyingOptions:{AUCTION}", "buyingOptions:{FIXED_PRICE}"], "the US search is not narrowed");
   assert.equal(body.auctions.count, 4);
   assert.deepEqual(body.auctions.items, [
     { title: AUCTIONS[0].title, price: 2.5, currency: "USD", shipping: null, bidCount: 3, endsAt: "2026-11-09T01:00:00.000Z", url: "https://www.ebay.com/itm/1", image: "https://i.ebayimg.com/a.jpg", condition: "Ungraded", graded: false },
@@ -236,6 +261,85 @@ await test("rate limits each IP per minute", async () => {
   const statuses = [];
   for (let i = 0; i < 31; i++) statuses.push((await get(fresh, "/ebay?q=Hawlucha", { ip: "192.0.2.1" })).status);
   assert.deepEqual([statuses[29], statuses[30]], [200, 429]);
+});
+
+await test("country=KR: shipping to Seoul, only listings that ship to Korea, shipTo echoed", async () => {
+  const calls = fakeEbay();
+  const worker = await loadWorker();
+  const res = await get(worker, "/ebay?q=Hawlucha%20sv8a%20084/187%20Japanese&country=KR");
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.shipTo, "KR");
+  assert.deepEqual(calls.ctx, Array(2).fill("contextualLocation=country%3DKR%2Czip%3D04524"), "Korea uses postcodes: central Seoul");
+  assert.deepEqual(calls.filters, ["buyingOptions:{AUCTION},deliveryCountry:KR", "buyingOptions:{FIXED_PRICE},deliveryCountry:KR"]);
+  // Totals with shipping to Korea; 3 listings have a known cost, so they come first: 1.50 + 3.00 (the cheaper of two
+  // ways), 4.00 + 6.00, 0.99 + 12, then the unknown ones (2.00, 3.00): international shipping is rarely free.
+  assert.deepEqual(body.buyNow.items.map((i) => [i.price, i.shipping]), [[1.5, 3], [4, 6], [0.99, 12], [2, null], [3, null]]);
+  assert.equal(body.buyNow.lowest, 4.5);
+  assert.equal(body.buyNow.lowestShipping, 3);
+  assert.equal(body.buyNow.median, 10, "median of the known totals 4.50, 10 and 12.99");
+  assert.equal(body.buyNow.items[3].shipping, null, "unknown shipping stays null, not free");
+  // The links stay plain eBay US searches.
+  assert.equal(body.searchUrl, "https://www.ebay.com/sch/i.html?_nkw=Hawlucha%20sv8a%20084%2F187%20Japanese&_sacat=183454");
+
+  calls.ctx.length = 0;
+  assert.equal((await (await get(worker, "/ebay?q=Hawlucha%20084&country=%20kr%20")).json()).shipTo, "KR", "any case, spaces trimmed");
+  assert.equal(calls.ctx[0], "contextualLocation=country%3DKR%2Czip%3D04524");
+});
+
+await test("country=KR with fewer than 3 known shipping costs: ranked by price, so one pricey listing can't decide", async () => {
+  // One listing with known shipping ($80 + $20) and many cheap ones whose shipping to Korea eBay can't price.
+  const cheap = Array.from({ length: 6 }, (_, i) => ({
+    title: `Hawlucha 084/187 copy ${i}`, price: { value: (3 + i * 0.1).toFixed(2), currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+    itemWebUrl: `https://www.ebay.com/itm/c${i}`, shippingOptions: [{ shippingCostType: "CALCULATED" }],
+  }));
+  const pricey = { title: "Hawlucha 084/187 sealed", price: { value: "80.00", currency: "USD" }, buyingOptions: ["FIXED_PRICE"], itemWebUrl: "https://www.ebay.com/itm/p1", shippingOptions: [{ shippingCost: { value: "20.00", currency: "USD" } }] };
+  fakeEbay({ krBuyNow: [pricey, ...cheap] });
+  const body = await (await get(await loadWorker(), "/ebay?q=Hawlucha%20084/187&country=KR")).json();
+  assert.equal(body.buyNow.lowest, 3);
+  assert.equal(body.buyNow.lowestShipping, null, "shown as + shipping");
+  assert.equal(body.buyNow.median, 3.3, "median of 3.00–3.50 and 100");
+  assert.equal(body.buyNow.items[0].url, "https://www.ebay.com/itm/c0", "the cheapest first, not the one with known shipping");
+});
+
+await test("unknown or garbage country falls back to the US", async () => {
+  const calls = fakeEbay();
+  const worker = await loadWorker();
+  for (const [i, c] of ["US", "us", "JP", "", "KOR", "__proto__", "constructor", "KR,US", "\u0000KR", "toString"].entries()) {
+    calls.ctx.length = 0;
+    const res = await get(worker, `/ebay?q=Hawlucha%20${i}&country=${encodeURIComponent(c)}`);
+    assert.equal(res.status, 200, c);
+    assert.equal((await res.json()).shipTo, "US", c);
+    assert.deepEqual(calls.ctx, Array(2).fill("contextualLocation=country%3DUS%2Czip%3D10001"), c);
+  }
+  const repeated = await (await get(worker, "/ebay?q=Hawlucha%20twice&country=KR&country=US")).json();
+  assert.equal(repeated.shipTo, "KR", "the first value counts");
+});
+
+await test("US and Korean results are cached apart", async () => {
+  const calls = fakeEbay();
+  const worker = await loadWorker();
+  cacheKeys.match.length = 0;
+  cacheKeys.put.length = 0;
+  const us = await get(worker, "/ebay?q=Hawlucha%20084/187");
+  assert.equal(us.headers.get("x-cache"), "MISS");
+  const kr = await get(worker, "/ebay?q=Hawlucha%20084/187&country=KR");
+  assert.equal(kr.headers.get("x-cache"), "MISS", "a cached US answer is never served to Korea");
+  assert.equal(calls.search, 4);
+  assert.equal((await kr.json()).shipTo, "KR");
+
+  const usAgain = await get(worker, "/ebay?q=hawlucha%20084/187&country=nope");
+  assert.equal(usAgain.headers.get("x-cache"), "MEM");
+  assert.equal((await usAgain.json()).shipTo, "US");
+  const krAgain = await get(worker, "/ebay?q=HAWLUCHA%20084/187&country=kr");
+  assert.equal(krAgain.headers.get("x-cache"), "MEM");
+  assert.equal((await krAgain.json()).shipTo, "KR");
+  assert.equal(calls.search, 4, "both served from memory");
+
+  // The Cache API keys carry the country too (old keys without it are never read back).
+  assert.deepEqual(cacheKeys.put.map((u) => u.searchParams.get("c")), ["US", "KR"]);
+  assert.deepEqual(cacheKeys.match.map((u) => u.searchParams.get("c")), ["US", "KR"]);
+  assert.notEqual(cacheKeys.put[0].href, cacheKeys.put[1].href);
 });
 
 console.log("all worker tests passed");

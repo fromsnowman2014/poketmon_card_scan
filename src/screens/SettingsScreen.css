@@ -121,6 +121,13 @@
   gap: 6px;
 }
 
+/* "Redeploy the worker for shipping to Korea": its own line under "Connected!", calmer than it. */
+.settings-test-result > .settings-test-old {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-caption);
+}
+
 .settings-test-result .icon {
   flex: none;
   margin-top: 1px;

@@ -66,7 +66,8 @@ let failedAt = 0;
 const listeners = new Set<() => void>();
 
 function publish(rates: Rates): void {
-  if (latest && latest.EUR === rates.EUR && latest.KRW === rates.KRW) return;
+  // fetchedAt counts too: the rate line says when the rate was last checked, even when it didn't move.
+  if (latest && latest.EUR === rates.EUR && latest.KRW === rates.KRW && latest.fetchedAt === rates.fetchedAt) return;
   latest = rates;
   listeners.forEach((l) => l());
 }

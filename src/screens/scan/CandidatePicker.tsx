@@ -3,8 +3,8 @@ import { CardImage } from '../../components/CardImage';
 import { Icon } from '../../components/Icon';
 import { TopBar } from '../../components/TopBar';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
-import { nameInUiLang } from '../../lib/localName';
 import type { CardBrief } from '../../lib/types';
+import { cardNames } from '../card/format';
 
 const STRINGS: Strings<'title' | 'text' | 'yourPhoto' | 'foundCard' | 'yes' | 'no' | 'notHere' | 'retake'> = {
   ko: {
@@ -29,9 +29,14 @@ const STRINGS: Strings<'title' | 'text' | 'yourPhoto' | 'foundCard' | 'yes' | 'n
   },
 };
 
-function useSubtitle(card: CardBrief): string | undefined {
+/**
+ * The candidate's name and the line under it, in the same order as its Card screen title (format.cardNames): JA cards
+ * lead with the UI-language name ("루차불" / "Hawlucha") over the printed one ("ルチャブル"); EN cards keep the English
+ * name, with the Korean one under it in the Korean UI. Candidates have no Pokédex ids, so the name is matched.
+ */
+function useNames(card: CardBrief): { title: string; subtitle?: string } {
   const uiLang = useUiLang();
-  return useMemo(() => (card.lang === 'en' ? undefined : nameInUiLang(card.name, uiLang)), [card, uiLang]);
+  return useMemo(() => cardNames({ name: card.name, dexIds: [] }, card.lang, uiLang), [card.name, card.lang, uiLang]);
 }
 
 /** Card picture; newer JA sets have no pictures yet, so CardImage prints the code on the card back instead. */
@@ -44,12 +49,12 @@ function CandidateArt({ card }: { card: CardBrief }) {
 }
 
 function Candidate({ card, onPick }: { card: CardBrief; onPick: (card: CardBrief) => void }) {
-  const subtitle = useSubtitle(card);
+  const { title, subtitle } = useNames(card);
   return (
     <li>
       <button type="button" className="scan-cand" onClick={() => onPick(card)}>
         <CandidateArt card={card} />
-        <span className="scan-cand-name truncate">{card.name}</span>
+        <span className="scan-cand-name truncate">{title}</span>
         {subtitle && <span className="scan-cand-sub truncate">{subtitle}</span>}
         <span className="scan-cand-set">
           {card.setName && <span className="truncate">{card.setName}</span>}
@@ -73,7 +78,7 @@ function CompareOne({
   onNo: () => void;
 }) {
   const t = useStrings(STRINGS);
-  const subtitle = useSubtitle(card);
+  const { title, subtitle } = useNames(card);
   return (
     <>
       <div className="scan-compare pop-in">
@@ -87,8 +92,8 @@ function CompareOne({
         </figure>
       </div>
       <div className="center stack-4">
-        <h2 className="h2">{card.name}</h2>
-        {subtitle && <p className="small text-primary">{subtitle}</p>}
+        <h2 className="h2">{title}</h2>
+        {subtitle && <p className="small muted">{subtitle}</p>}
         <p className="caption muted">
           {card.setName && `${card.setName} · `}
           <span className="tabular">#{card.localId}</span>

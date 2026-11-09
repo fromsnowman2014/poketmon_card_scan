@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Rates } from '../lib/fx';
 import { formatMoney } from '../lib/pricing';
-import { moneyChars, moneyParts } from './moneyChars';
+import { HANGUL, moneyChars, moneyParts } from './moneyChars';
 
 const RATES: Rates = { EUR: 0.9, KRW: 1400, fetchedAt: '2026-11-08T00:00:00.000Z' };
 const R1000: Rates = { ...RATES, KRW: 1000 };
@@ -62,9 +62,19 @@ describe('moneyParts', () => {
     expect(moneyParts(1975.4, 'KRW', R1000, { approx: true, lang: 'ko' })).toEqual({ prefix: '약 ', amount: '198만 원', text: '약 198만 원' });
   });
 
+  it('uses the same "약" before dollars in the Korean UI (one sign for "about")', () => {
+    expect(moneyParts(3.5, 'USD', R1000, { approx: true, lang: 'ko' })).toEqual({ prefix: '약 ', amount: '$3.50', text: '약 $3.50' });
+    expect(moneyParts(22.3, 'USD', R1000, { approx: true, lang: 'ko' })).toEqual({ prefix: '약 ', amount: '$22.30', text: '약 $22.30' });
+    // Money draws a Hangul prefix as a word (money-approx-word), so it is counted Hangul-wide.
+    expect(HANGUL.test(moneyParts(3.5, 'USD', R1000, { approx: true, lang: 'ko' }).prefix)).toBe(true);
+    expect(moneyChars('약 $3.50')).toBe(7.4);
+  });
+
   it('splits "≈" from dollars and from won in the English UI', () => {
-    expect(moneyParts(3.5, 'USD', R1000, { approx: true, lang: 'ko' })).toEqual({ prefix: '≈ ', amount: '$3.50', text: '≈ $3.50' });
+    expect(moneyParts(3.5, 'USD', R1000, { approx: true, lang: 'en' })).toEqual({ prefix: '≈ ', amount: '$3.50', text: '≈ $3.50' });
+    expect(moneyParts(3.5, 'USD', R1000, { approx: true })).toEqual({ prefix: '≈ ', amount: '$3.50', text: '≈ $3.50' });
     expect(moneyParts(4.76, 'KRW', R1000, { approx: true, lang: 'en' })).toEqual({ prefix: '≈ ', amount: '₩4,760', text: '≈ ₩4,760' });
+    expect(HANGUL.test('≈ ')).toBe(false);
   });
 
   it('has no prefix for exact or missing amounts', () => {

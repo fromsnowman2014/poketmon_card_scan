@@ -1,12 +1,11 @@
 import { CardImage } from '../../components/CardImage';
 import { Icon } from '../../components/Icon';
 import { Money } from '../../components/Money';
-import { TierBadge } from '../../components/TierBadge';
+import { TierBadge, useValueTier } from '../../components/TierBadge';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
-import { valueTier } from '../../lib/pricing';
 import { Link } from '../../lib/router';
 import type { CollectionItem } from '../../lib/types';
-import { uiName } from './itemName';
+import { itemNames } from './itemName';
 
 const STRINGS: Strings<'title'> = {
   ko: { title: '최고의 카드' },
@@ -17,8 +16,8 @@ const STRINGS: Strings<'title'> = {
 export function BestCard({ item, photo }: { item: CollectionItem; photo?: string }) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
-  const tier = valueTier(item.priceUsd);
-  const sub = uiName(item, lang);
+  const tier = useValueTier()(item.priceUsd);
+  const { title: name, subtitle } = itemNames(item, lang);
   return (
     <Link
       to={`/card/${item.lang}/${encodeURIComponent(item.id)}`}
@@ -28,7 +27,7 @@ export function BestCard({ item, photo }: { item: CollectionItem; photo?: string
         image={item.image}
         fallback={item.imageFallback}
         photo={photo}
-        alt={item.name}
+        alt={name}
         size="thumb"
         tier={tier}
         code={{ set: item.setId, number: item.localId }}
@@ -39,8 +38,8 @@ export function BestCard({ item, photo }: { item: CollectionItem; photo?: string
           <Icon name="sparkles" size={18} />
           {t('title')}
         </span>
-        <span className="collection-best-name">{item.name}</span>
-        <span className="small muted truncate">{sub ?? `${item.setName} · #${item.localId}`}</span>
+        <span className="collection-best-name">{name}</span>
+        <span className="small muted truncate">{subtitle ?? `${item.setName} · #${item.localId}`}</span>
         <Money usd={item.priceUsd} approx={item.priceApprox} className="collection-best-price" />
         <TierBadge tier={tier} size="sm" />
       </span>

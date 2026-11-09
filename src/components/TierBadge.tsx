@@ -1,4 +1,8 @@
+import { useCallback } from 'react';
+import { useRates } from '../lib/fx';
 import { useStrings, type Strings } from '../lib/i18n';
+import { valueTier } from '../lib/pricing';
+import { useSettings } from '../lib/store';
 import type { ValueTier } from '../lib/types';
 import { cx } from './cx';
 import './TierBadge.css';
@@ -40,6 +44,16 @@ const CHEERS: Strings<ValueTier> = {
     treasure: 'Treasure! Keep it safe!',
   },
 };
+
+/**
+ * `(usd) => ValueTier` in the money the kid sees (settings.currency, live rates), so a tier always matches the number
+ * on screen: a $0.80 card is 🍃 동전 카드 in dollars but ⭐ 과자값 카드 as 1,090원. Use it for every tier shown.
+ */
+export function useValueTier(): (usd: number | null | undefined) => ValueTier {
+  const { currency } = useSettings();
+  const rates = useRates();
+  return useCallback((usd: number | null | undefined) => valueTier(usd, currency, rates), [currency, rates]);
+}
 
 export interface TierBadgeProps {
   tier: ValueTier;

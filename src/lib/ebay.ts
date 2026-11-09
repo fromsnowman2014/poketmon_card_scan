@@ -1,7 +1,7 @@
 // eBay: search keywords for a card, deep links (always available) and the optional worker client.
 import { HttpError } from './cache';
 import { localizedName, translateCardName } from './names';
-import type { CardDetail, EbayListing, EbaySummary } from './types';
+import type { CardDetail, Country, EbayListing, EbaySummary } from './types';
 
 export type EbayCard = Pick<CardDetail, 'name' | 'lang' | 'localId' | 'setId' | 'dexIds' | 'setName' | 'setOfficialCount' | 'printedNumber'>;
 
@@ -66,10 +66,19 @@ function workerBase(workerUrl: string): string {
 
 /**
  * Live eBay summary from the optional proxy worker (see /worker). 10 s timeout; aborts with `signal`.
+ * `country` is where the kid lives (settings.country): Korea adds `&country=KR`, so the worker prices shipping to
+ * Seoul and keeps only listings that ship there. The US adds nothing, so the URL (and the worker's cache key) stays
+ * what it always was and older workers still answer. The result's `shipTo` says what the worker did ('US' when an
+ * older worker ignored the country).
  * Throws on network errors, non-2xx (HttpError) and malformed responses — callers fall back to `ebayLinks`.
  */
-export async function fetchEbaySummary(workerUrl: string, query: string, signal?: AbortSignal): Promise<EbaySummary> {
-  const url = `${workerBase(workerUrl)}/ebay?q=${encodeURIComponent(collapse(query))}`;
+export async function fetchEbaySummary(
+  workerUrl: string,
+  query: string,
+  signal?: AbortSignal,
+  country?: Country,
+): Promise<EbaySummary> {
+  const url = `${workerBase(workerUrl)}/ebay?q=${encodeURIComponent(collapse(query))}${country === 'KR' ? '&country=KR' : ''}`;
   const ctrl = new AbortController();
   const abort = () => ctrl.abort();
   const timer = setTimeout(abort, TIMEOUT_MS);
@@ -133,5 +142,7 @@ function parseSummary(x: unknown): EbaySummary {
     },
     searchUrl,
     soldUrl: httpsUrl(x.soldUrl),
+    // Only the two known values; an older worker (no shipTo) or anything else priced shipping to the US.
+    shipTo: x.shipTo === 'KR' ? 'KR' : 'US',
   };
 }

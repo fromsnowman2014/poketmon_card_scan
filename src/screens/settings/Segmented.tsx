@@ -4,6 +4,8 @@ export interface SegmentOption<T extends string> {
   value: T;
   label: string;
   icon?: IconName;
+  /** Shown before the label but hidden from screen readers (a flag would be read as "regional indicator U, S"). */
+  emoji?: string;
   /** Language of the label, so 日本語 / 한국어 render with the right font and voice. */
   lang?: string;
 }
@@ -30,6 +32,7 @@ export function Segmented<T extends string>({ labelledBy, value, options, onChan
           onClick={() => onChange(o.value)}
         >
           {o.icon && <Icon name={o.icon} size={18} />}
+          {o.emoji && <span aria-hidden="true">{o.emoji} </span>}
           {o.label}
         </button>
       ))}

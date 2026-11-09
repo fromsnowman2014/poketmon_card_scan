@@ -27,7 +27,7 @@ describe('buildVariants — real TCGdex cards', () => {
     expect(reverse.summary).toMatchObject({
       market: 1.69, // 1.51 EUR / 0.8957
       low: 1.69,
-      high: 5.81, // avg1-holo 5.2 EUR
+      high: 2.04, // avg30-holo 1.83 EUR; avg1-holo 5.2 EUR is one day's lone sale, left out
       changePct: null, // −8.2% on a $1.69 card: no up/down badge
       source: 'cardmarket',
       converted: true,
@@ -239,7 +239,99 @@ describe('summarize', () => {
 
   it('Cardmarket only: converts EUR and uses the usual range, ignoring the junk low', () => {
     const s = summarize(null, { avg: 4, low: 0.02, trend: 3, avg1: 5, avg7: 2.5, avg30: 2, }, rates, '2026-11-07');
-    expect(inCents(s)).toEqual({ market: 3.35, low: 2.23, high: 5.58, changePct: 25, source: 'cardmarket', converted: true, updated: '2026-11-07' });
+    // high = avg €4: one day's average (avg1 €5) is left out of the range.
+    expect(inCents(s)).toEqual({ market: 3.35, low: 2.23, high: 4.47, changePct: 25, source: 'cardmarket', converted: true, updated: '2026-11-07' });
+  });
+
+  describe('Cardmarket only: the usual range', () => {
+    const usd = (eur: number) => eur / rates.EUR;
+    it('ja SV8a-031: one day\'s €5.39 sale is not the highest price of a €1.29 card', () => {
+      // Was "약 1,960원 ~ 약 8,180원". Now €1.29 ~ €1.75 (avg7).
+      const s = summarize(null, { avg: 1.34, low: 0.1, trend: 1.29, avg1: 5.39, avg7: 1.75, avg30: 1.51 }, rates)!;
+      expect(s.market).toBeCloseTo(usd(1.29), 9);
+      expect(s.low).toBeCloseTo(usd(1.29), 9);
+      expect(s.high).toBeCloseTo(usd(1.75), 9);
+      expect(formatMoney(s.high, 'KRW', rates, { lang: 'ko', approx: true })).toBe('약 2,660원');
+    });
+
+    it('caps every average at 3× the market price either way', () => {
+      const range = (cm: Partial<CardmarketPrice>) => {
+        const s = summarize(null, { avg: null, low: null, trend: 1, avg1: null, avg7: null, avg30: null, ...cm }, rates)!;
+        return [s.low, s.high].map((x) => r2(x! * rates.EUR));
+      };
+      expect(range({ avg7: 0.34, avg30: 3 })).toEqual([0.34, 3]); // exactly 3× still counts
+      expect(range({ avg7: 0.33, avg30: 3.01 })).toEqual([1, 1]);
+      expect(range({ avg7: 1.2, avg30: 0.9, avg: 3.5 })).toEqual([0.9, 1.2]); // a spiky all-time average too
+      expect(range({ avg7: 1.2, avg30: 0.9, avg: 2.5 })).toEqual([0.9, 2.5]);
+      // One day's average never widens the range (the week's average already counts that day).
+      expect(range({ avg1: 0.5, avg7: 1.2, avg30: 0.9 })).toEqual([0.9, 1.2]);
+      expect(range({ avg1: 2.5, avg7: 1.2, avg30: 0.9 })).toEqual([0.9, 1.2]);
+    });
+  });
+
+  describe('Cardmarket only: a junk trend is not the market price', () => {
+    const usd = (eur: number) => eur / rates.EUR;
+    it('ja SV8a-092: a €0.02 trend on a card that sells for €0.18–0.30 gives way to the week\'s average', () => {
+      // Was "약 30원" (trend) with a high of €3.23 (an old avg30 spike).
+      const cm = { avg: 2.71, low: 0.02, trend: 0.02, avg1: 0.3, avg7: 0.18, avg30: 3.23 };
+      const s = summarize(null, cm, rates)!;
+      expect(s.market).toBeCloseTo(usd(0.18), 9);
+      expect(s.low).toBeCloseTo(usd(0.18), 9); // the junk trend is not the low either
+      expect(s.high).toBeCloseTo(usd(0.18), 9); // avg30 €3.23 and avg €2.71 are more than 3× away
+      expect(s.changePct).toBeNull();
+      expect(formatMoney(s.market, 'KRW', rates, { lang: 'ko', approx: true })).toBe('약 270원');
+      // Without the week's average, the month's.
+      expect(summarize(null, { ...cm, avg7: null, avg30: 0.25 }, rates)!.market).toBeCloseTo(usd(0.25), 9);
+    });
+
+    it('ja SV2a-148: a €4.87 trend on a card that sells for €0.08–0.12 gives way too', () => {
+      const s = summarize(null, { avg: 0.1, low: 0.02, trend: 4.87, avg1: 0.12, avg7: 0.08, avg30: 0.11 }, rates)!;
+      expect(s.market).toBeCloseTo(usd(0.08), 9);
+      expect(s.high).toBeCloseTo(usd(0.11), 9);
+    });
+
+    it('keeps a trend the recent sales back, or one there is nothing to judge by', () => {
+      const market = (cm: Partial<CardmarketPrice>) =>
+        r2(summarize(null, { avg: null, low: null, trend: null, avg1: null, avg7: null, avg30: null, ...cm }, rates)!.market! * rates.EUR);
+      // ja SV8a-001: the price went up this week; the trend follows the week's average, not the month's.
+      expect(market({ trend: 0.41, avg1: 0.02, avg7: 0.44, avg30: 0.09 })).toBe(0.41);
+      // A third of the median still counts; 3× the highest recent average still counts.
+      expect(market({ trend: 0.1, avg1: 0.3, avg7: 0.2, avg30: 0.4 })).toBe(0.1);
+      expect(market({ trend: 0.09, avg1: 0.3, avg7: 0.2, avg30: 0.4 })).toBe(0.2);
+      expect(market({ trend: 1.2, avg1: 0.3, avg7: 0.2, avg30: 0.4 })).toBe(1.2);
+      expect(market({ trend: 1.21, avg1: 0.3, avg7: 0.2, avg30: 0.4 })).toBe(0.2);
+      // Only one day's average to judge by: the trend stays.
+      expect(market({ trend: 0.02, avg1: 0.3 })).toBe(0.02);
+      expect(market({ trend: 0.5 })).toBe(0.5);
+      // No trend: the averages, as before.
+      expect(market({ avg30: 0.3, avg: 0.4, avg7: 0.5 })).toBe(0.3);
+    });
+
+    it('ja SV2a-104 Poké Ball reverse: placeholder averages nobody sells near give way to the cheapest copy', () => {
+      // Was "약 340원" (€0.25 in every average) for a card whose cheapest copy is €40.
+      const s = summarize(null, { avg: null, low: 40, trend: 0.25, avg1: 0.25, avg7: 0.25, avg30: 0.25 }, rates)!;
+      expect(s.market).toBeCloseTo(usd(40), 9);
+      expect([s.low, s.high]).toEqual([s.market, s.market]); // the €0.25 averages are not the usual range
+      expect(s.changePct).toBeNull();
+      // Below €1, or within 3×, the cheapest listing changes nothing.
+      const placeholder = (eur: number) => ({ avg: null, trend: eur, avg1: eur, avg7: eur, avg30: eur });
+      const market = (cm: Partial<CardmarketPrice>) =>
+        r2(summarize(null, { avg: null, low: null, trend: null, avg1: null, avg7: null, avg30: null, ...cm }, rates)!.market! * rates.EUR);
+      expect(market({ ...placeholder(0.1), low: 0.9 })).toBe(0.1);
+      expect(market({ ...placeholder(0.5), low: 1.5 })).toBe(0.5);
+      expect(market({ ...placeholder(0.5), low: 1.51 })).toBe(1.51);
+      expect(market({ ...placeholder(0.5), avg1: null, low: 1.51 })).toBe(1.51);
+      // Real averages (they differ, or there is an all-time average) are never replaced by one listing: a cheap card
+      // whose cheap copies sold out keeps its price.
+      expect(market({ trend: 0.2, avg1: 0.18, avg7: 0.22, avg30: 0.2, avg: 0.21, low: 1.5 })).toBe(0.2);
+      expect(market({ ...placeholder(0.25), avg: 0.25, low: 40 })).toBe(0.25);
+    });
+
+    it('a junk Cardmarket trend is not a TCGplayer card\'s highest price either', () => {
+      const tp = { low: 1.5, mid: null, high: 999, market: 2, directLow: null };
+      expect(summarize(tp, { avg: null, low: null, trend: 5, avg1: 0.1, avg7: 0.1, avg30: 0.12 }, rates)?.high).toBe(2);
+      expect(summarize(tp, { avg: null, low: null, trend: 5, avg1: 4, avg7: 4.5, avg30: 4.2 }, rates)?.high).toBeCloseTo(usd(5), 9);
+    });
   });
 
   it('Cardmarket only: keeps exact USD so a penny card is not rounded twice (€0.04 → 60원, not 50원)', () => {
@@ -280,6 +372,24 @@ describe('valueTier', () => {
     [0.996, 'nice'], // shown as $1.00
     [4.994, 'nice'], // shown as $4.99
   ] as const)('%s → %s', (usd, tier) => expect(valueTier(usd)).toBe(tier));
+
+  it('uses won thresholds for Korean kids (1,000 / 5,000 / 30,000 / 150,000원)', () => {
+    const won = { EUR: 0.9, KRW: 1000, fetchedAt: '2026-11-08T00:00:00.000Z' };
+    const tier = (krw: number) => valueTier(krw / 1000, 'KRW', won);
+    expect(tier(990)).toBe('common');
+    expect(tier(1000)).toBe('nice');
+    expect(tier(4990)).toBe('nice');
+    expect(tier(5000)).toBe('rare');
+    expect(tier(29_900)).toBe('rare');
+    expect(tier(30_000)).toBe('super');
+    expect(tier(149_900)).toBe('super');
+    expect(tier(150_000)).toBe('treasure');
+    expect(tier(995)).toBe('nice'); // shown as 1,000원
+    expect(valueTier(null, 'KRW', won)).toBe('common');
+    // The same $0.80 card: pocket change in dollars, a snack in won.
+    expect(valueTier(0.8, 'USD', won)).toBe('common');
+    expect(valueTier(0.8, 'KRW', { ...won, KRW: 1359 })).toBe('nice');
+  });
 });
 
 describe('formatMoney', () => {
@@ -312,7 +422,12 @@ describe('formatMoney', () => {
     expect(formatMoney(120000, 'KRW', r, { lang: 'ko' })).toBe('1억 2,000만 원');
     expect(formatMoney(100000, 'KRW', r, { lang: 'ko' })).toBe('1억 원');
     expect(formatMoney(4.76, 'KRW', r, { lang: 'en', approx: true })).toBe('≈ ₩4,760');
-    expect(formatMoney(4.76, 'USD', r, { lang: 'ko', approx: true })).toBe('≈ $4.76');
+    // One sign for "about" in the Korean UI, whatever the money.
+    expect(formatMoney(4.76, 'USD', r, { lang: 'ko', approx: true })).toBe('약 $4.76');
+    expect(formatMoney(0.0447, 'USD', r, { lang: 'ko', approx: true })).toBe('약 $0.04');
+    expect(formatMoney(4.76, 'USD', r, { lang: 'en', approx: true })).toBe('≈ $4.76');
+    expect(formatMoney(1975.4, 'USD', r, { lang: 'ko', approx: true })).toBe('약 $1,975');
+    expect(formatMoney(4.76, 'USD', r, { lang: 'ko' })).toBe('$4.76');
   });
 
   it('rounds unrounded (converted) amounts only for display', () => {

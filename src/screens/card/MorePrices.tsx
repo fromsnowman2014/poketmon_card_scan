@@ -1,8 +1,10 @@
 import { ExternalLink } from '../../components/ExternalLink';
 import { Icon } from '../../components/Icon';
-import { useStrings, type Strings } from '../../lib/i18n';
+import { useRates, type Rates } from '../../lib/fx';
+import { fmtRelativeTime, interpolate, useStrings, type Strings } from '../../lib/i18n';
 import { formatMoney } from '../../lib/pricing';
-import type { CardVariant } from '../../lib/types';
+import { useSettings } from '../../lib/store';
+import type { CardVariant, UiLang } from '../../lib/types';
 
 type Key =
   | 'title'
@@ -61,6 +63,27 @@ const STRINGS: Strings<Key> = {
   },
 };
 
+const RATE: Strings<'today' | 'older' | 'when'> = {
+  ko: { today: '오늘 환율: 1달러 = {won}원', older: '환율: 1달러 = {won}원', when: '{line} · {ago} 업데이트' },
+  en: { today: 'Today’s rate: $1 = ₩{won}', older: 'Rate: $1 = ₩{won}', when: '{line} · updated {ago}' },
+};
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WHOLE = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
+/**
+ * The dollar-to-won rate the won prices use, in whole won, with how old it is: "오늘 환율: 1달러 = 1,359원 · 2시간 전
+ * 업데이트" / "Today’s rate: $1 = ₩1,359 · updated 2h ago". Older than a day (offline, or the built-in snapshot), it
+ * drops "today".
+ */
+export function rateLine(rates: Rates, lang: UiLang, now: number = Date.now()): string {
+  const s = RATE[lang];
+  const at = Date.parse(rates.fetchedAt);
+  const fresh = Number.isFinite(at) && now - at < DAY_MS;
+  const line = interpolate(fresh ? s.today : s.older, { won: WHOLE.format(Math.round(rates.KRW)) });
+  const ago = Number.isFinite(at) ? fmtRelativeTime(rates.fetchedAt, lang, now) : '';
+  return ago ? interpolate(s.when, { line, ago }) : line;
+}
+
 const EUR = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR' });
 const eur = (n: number | null) => (n === null ? '—' : EUR.format(n));
 const usd = (n: number | null) => formatMoney(n, 'USD');
@@ -94,9 +117,14 @@ export interface MorePricesProps {
   workerHint?: boolean;
 }
 
-/** Raw source numbers for grown-ups: TCGplayer (USD) and Cardmarket (EUR), unconverted, plus eBay details. */
+/**
+ * Raw source numbers for grown-ups: TCGplayer (USD) and Cardmarket (EUR), unconverted, plus eBay details. With won
+ * prices, one line gives today's dollar-to-won rate so the dollar numbers here can be compared.
+ */
 export function MorePrices({ variant, variantName, ebayQuery, workerHint }: MorePricesProps) {
   const t = useStrings(STRINGS);
+  const { currency, uiLang } = useSettings();
+  const rates = useRates();
   const { tcgplayer: tcg, cardmarket: cm, tcgplayerId, summary } = variant;
   if (!tcg && !cm && !tcgplayerId && !ebayQuery && !workerHint) return null;
   // TCGplayer's raw high is often a 999 placeholder listing that the headline range leaves out.
@@ -110,6 +138,7 @@ export function MorePrices({ variant, variantName, ebayQuery, workerHint }: More
       </summary>
       <div className="card-more-body stack-16">
         {variantName && <p className="caption muted">{t('forVariant', { variant: variantName })}</p>}
+        {currency === 'KRW' && <p className="caption muted tabular">{rateLine(rates, uiLang)}</p>}
         {(tcg || tcgplayerId) && (
           <div className="stack-8">
             <h3 className="card-more-source">

@@ -115,14 +115,8 @@ button.card-art:active {
     font-size: 24px;
   }
 
-  .card-price {
-    gap: 8px;
-    padding: 14px 14px 12px;
-  }
-
-  .card-price-tiered {
-    padding-top: 28px;
-  }
+  /* .card-price and .card-price-tiered get their short-phone spacing under the price-hero rules below (a rule here
+     would lose to the base rules that come later in the file). */
 }
 
 /* One compact row: the language flag sits in the set chip. A very long set name truncates (the number stays);
@@ -198,6 +192,18 @@ button.card-art:active {
   background: radial-gradient(120% 70% at 50% 0%, var(--tier-bg), transparent 70%), var(--surface);
   border-color: var(--tier-bg);
   border-color: color-mix(in srgb, var(--tier) 32%, var(--border));
+}
+
+/* Short phones (iPhone SE): tighter price panel, after the base rules above so it wins. */
+@media (max-height: 720px) {
+  .card-price {
+    gap: 8px;
+    padding: 14px 14px 12px;
+  }
+
+  .card-price-tiered {
+    padding-top: 28px;
+  }
 }
 
 .card-tier {
@@ -365,8 +371,11 @@ button.card-art:active {
   text-wrap: balance;
 }
 
-/* "eBay 가격은 아래에 있어요 ↓": a 44px tap target that looks like one small line (negative margins). */
+/* "eBay 가격은 아래에 있어요 ↓": a 44px tap target that looks like one small line (negative margins).
+   Its text is part of the fold (FOLD_ATTR), so the art leaves room for it on every phone. It comes after the source
+   line (order 1; it is before it in the page, see below). */
 .card-ebay-jump {
+  order: 1;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -383,6 +392,17 @@ button.card-art:active {
 
 .card-ebay-jump:active {
   background: var(--primary-soft);
+}
+
+/* Phones where the art is sized by the height (iPhone SE, many Androids; from ~800px tall the art hits its width cap
+   anyway): the hint goes right under the low–high row, so the art only gives up one small line for it. The source
+   line ("23시간 전 업데이트 · TCGplayer") follows it, on an SE just below the fold, where it was half hidden behind
+   the Scan button anyway. */
+@media (max-height: 800px) {
+  .card-ebay-jump {
+    order: 0;
+    margin-top: -18px; /* its text 4px closer to the numbers: the art keeps a little more */
+  }
 }
 
 .card-price-empty {
@@ -459,28 +479,61 @@ button.card-art:active {
   outline: none;
 }
 
+/* "한국까지 오는 배송비로 계산했어요" / "미국 eBay 가격이에요 · …" under the heading: only for a kid who lives in Korea. */
+.card-ebay-ship {
+  text-wrap: balance;
+}
+
+.card-ebay-phrase {
+  display: inline-block;
+}
+
+/* Buy It Now: two columns, one grid. Labels, numbers and notes each share a row, so the two numbers sit on one line
+   even when one label wraps ("Lowest buy-now price" on an SE), and both take one size: EbayPanel sets --ebay-chars
+   to the wider amount. The grid is the size container: a column is (100cqi - the 12px gap) / 2, and a big amount
+   ("₩1,975,400", "1억 2,000만 원") shrinks to it instead of running into the other column. */
 .card-ebay-stats {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 4px 12px;
   padding: 14px 16px;
   border-radius: var(--radius);
   background: var(--surface-2);
-}
-
-/* Each column is a size container: a big amount ("₩1,975,400", "1억 2,000만 원") shrinks to its column
-   (Money sets --money-chars), like the Card price, instead of running into the next one. */
-.card-ebay-stats > div {
-  min-width: 0;
   container-type: inline-size;
 }
 
+.card-ebay-stats > * {
+  min-width: 0;
+}
+
+.card-ebay-label,
+.card-ebay-stats .card-ebay-big,
+.card-ebay-stat-note {
+  grid-column: 1;
+}
+
+.card-ebay-stats > .card-ebay-c2 {
+  grid-column: 2;
+}
+
+/* A one-line label sits right above its number when the other one takes two lines. */
+.card-ebay-label {
+  grid-row: 1;
+  align-self: end;
+}
+
 .card-ebay-stats .card-ebay-big {
+  grid-row: 2;
+  align-self: baseline;
   font-size: clamp(15px, 5vw, 24px);
-  font-size: clamp(15px, 100cqi / (var(--money-chars, 8) * 0.64), 24px);
+  font-size: clamp(15px, (100cqi - 12px) / 2 / (var(--ebay-chars, var(--money-chars, 8)) * 0.64), 24px);
   font-weight: 800;
   line-height: 1.15;
   white-space: normal; /* last resort: wrap at a space ("1억 2,000만 / 원") rather than overflow */
+}
+
+.card-ebay-stat-note {
+  grid-row: 3;
 }
 
 .card-ebay-sub {

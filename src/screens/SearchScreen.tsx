@@ -6,12 +6,13 @@ import { SearchBar } from '../components/SearchBar';
 import { Skeleton } from '../components/Skeleton';
 import { TopBar } from '../components/TopBar';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
-import { nameInUiLang } from '../lib/localName';
 import { Link, navigate, useRoute } from '../lib/router';
 import { useSettings } from '../lib/store';
 import { searchCards } from '../lib/tcgdex';
 import type { CardBrief, CardLang } from '../lib/types';
 import { useOnline } from '../lib/useOnline';
+import { cardNames } from './card/format';
+import { NUMBER_EXAMPLES, searchExamples } from './search/examples';
 import './SearchScreen.css';
 
 type Key =
@@ -47,9 +48,9 @@ const STRINGS: Strings<Key> = {
     startTitle: '어떤 카드를 찾을까요?',
     startText: '이름이나 카드 아래 번호를 써 보세요.',
     notFoundTitle: '음… 못 찾았어요',
-    notFoundText: '영어 이름으로 써 보거나, 카드 아래 번호(예: 084/187)를 넣어 보세요.',
+    notFoundText: '영어 이름으로 써 보거나, 카드 아래 번호(예: {total})를 넣어 보세요.',
     numberTitle: '번호를 조금 더 알려 주세요',
-    numberText: '084/187처럼 / 뒤 숫자까지, 또는 sv8a 084처럼 세트 기호와 함께 써요.',
+    numberText: '{total}처럼 / 뒤 숫자까지, 또는 {set}처럼 세트 기호와 함께 써요.',
     tryLang: '{lang}에서 찾아보기',
     errorTitle: '앗, 잠깐 문제가 생겼어요',
     errorText: '잠시 뒤 다시 해 볼까요?',
@@ -68,9 +69,9 @@ const STRINGS: Strings<Key> = {
     startTitle: 'Which card are you looking for?',
     startText: 'Type a name or the number at the bottom of the card.',
     notFoundTitle: 'Hmm, can’t find it',
-    notFoundText: 'Try the English name, or the number at the bottom like 084/187.',
+    notFoundText: 'Try the English name, or the number at the bottom like {total}.',
     numberTitle: 'Tell me a bit more',
-    numberText: 'Add the number after the slash (084/187) or the set code (sv8a 084).',
+    numberText: 'Add the number after the slash ({total}) or the set code ({set}).',
     tryLang: 'Try {lang}',
     errorTitle: 'Oops, something went wrong',
     errorText: 'Let’s try again in a moment.',
@@ -83,10 +84,6 @@ const STRINGS: Strings<Key> = {
 type SearchLang = Extract<CardLang, 'en' | 'ja'>;
 
 const LANG_LABELS: Record<SearchLang, string> = { en: 'English', ja: '日本語' };
-const EXAMPLES: Record<'ko' | 'en', string[]> = {
-  ko: ['피카츄', '리자몽 ex', 'sv8a 084/187'],
-  en: ['Pikachu', 'Charizard ex', 'sv8a 084/187'],
-};
 const DEBOUNCE_MS = 350;
 const LIMIT = 60;
 const SKELETONS = 9;
@@ -102,18 +99,22 @@ function searchHref(q: string, lang: CardLang): string {
 
 function ResultCard({ card, routeLang }: { card: CardBrief; routeLang: CardLang }) {
   const uiLang = useUiLang();
-  const subtitle = useMemo(() => (card.lang === 'en' ? undefined : nameInUiLang(card.name, uiLang)), [card, uiLang]);
   // Korean searches read the JA data but keep "ko" in the route so the card screen speaks Korean (eBay query etc.).
   const lang = routeLang === 'ko' && card.lang === 'ja' ? 'ko' : card.lang;
+  // The Card screen's title order: "루차불" over "ルチャブル" in Korean, "Hawlucha" over it in English.
+  const { title, subtitle } = useMemo(
+    () => cardNames({ name: card.name, dexIds: [] }, lang, uiLang),
+    [card.name, lang, uiLang],
+  );
   return (
     <li>
       <Link to={`/card/${lang}/${encodeURIComponent(card.id)}`} className="search-card">
         <span className="search-card-art">
           {/* Newer JA sets have no pictures yet (and a few images fail): the card back shows the code instead. */}
-          <CardImage image={card.image} alt={card.name} size="thumb" code={{ set: card.setId, number: card.localId }} />
+          <CardImage image={card.image} alt={title} size="thumb" code={{ set: card.setId, number: card.localId }} />
         </span>
         <span className="search-card-text">
-          <span className="search-card-name truncate">{card.name}</span>
+          <span className="search-card-name truncate">{title}</span>
           {subtitle && <span className="search-card-sub truncate">{subtitle}</span>}
           <span className="search-card-set">
             {card.setName && <span className="truncate">{card.setName} ·</span>}
@@ -184,6 +185,7 @@ export default function SearchScreen() {
   const current = q && result?.key === key ? result : undefined;
   const otherLang: SearchLang = dataLang === 'en' ? 'ja' : 'en';
   const bareNumber = /^\d{1,3}$/.test(q);
+  const numbers = NUMBER_EXAMPLES[settings.country];
 
   let body;
   if (!q) {
@@ -194,7 +196,7 @@ export default function SearchScreen() {
         text={t('startText')}
         action={
           <div className="chip-row search-examples">
-            {EXAMPLES[uiLang].map((example) => (
+            {searchExamples(settings.country, uiLang).map((example) => (
               <button key={example} type="button" className="chip" onClick={() => go(example)}>
                 {example}
               </button>
@@ -231,12 +233,12 @@ export default function SearchScreen() {
     );
   } else if (!current.cards.length) {
     body = bareNumber ? (
-      <EmptyState emoji="🔢" title={t('numberTitle')} text={t('numberText')} />
+      <EmptyState emoji="🔢" title={t('numberTitle')} text={t('numberText', numbers)} />
     ) : (
       <EmptyState
         emoji="🤔"
         title={t('notFoundTitle')}
-        text={t('notFoundText')}
+        text={t('notFoundText', numbers)}
         action={
           <button type="button" className="btn btn-secondary btn-lg btn-block" onClick={() => go(q, otherLang)}>
             <Icon name="globe" />
@@ -281,7 +283,8 @@ export default function SearchScreen() {
               </button>
             ))}
           </div>
-          <p className="caption muted search-note">{t('koNote')}</p>
+          {/* Korean cards are a Korea (or Korean-speaking kid) thing; an American kid with English cards skips it. */}
+          {(settings.country === 'KR' || uiLang === 'ko') && <p className="caption muted search-note">{t('koNote')}</p>}
         </div>
         {body}
       </div>

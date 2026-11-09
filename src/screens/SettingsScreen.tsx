@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { version } from '../../package.json';
+import { ExternalLink } from '../components/ExternalLink';
 import { Icon } from '../components/Icon';
 import { TopBar } from '../components/TopBar';
 import { useStrings, type Strings } from '../lib/i18n';
@@ -7,14 +8,20 @@ import { updateSettings, useSettings } from '../lib/store';
 import type { Settings } from '../lib/types';
 import { EbayWorker } from './settings/EbayWorker';
 import { InstallGuide } from './settings/InstallGuide';
+import { countryOptions, currencyOptions, moneyOverridden } from './settings/regionOptions';
 import { ResetData } from './settings/ResetData';
 import { Segmented, type SegmentOption } from './settings/Segmented';
 import './SettingsScreen.css';
 
 type Key =
   | 'title'
+  | 'country'
+  | 'livesKR'
+  | 'livesUS'
   | 'language'
   | 'currency'
+  | 'seeingUSD'
+  | 'seeingKRW'
   | 'theme'
   | 'system'
   | 'dark'
@@ -33,8 +40,13 @@ type Key =
 const STRINGS: Strings<Key> = {
   ko: {
     title: '설정',
+    country: '사는 곳',
+    livesKR: '가격은 원(₩)으로 보여 줘요.',
+    livesUS: '가격은 달러($)로 보여 줘요.',
     language: '언어 · Language',
-    currency: '통화',
+    currency: '돈 단위',
+    seeingUSD: '원 대신 달러로 보고 있어요.',
+    seeingKRW: '달러 대신 원으로 보고 있어요.',
     theme: '테마',
     system: '자동',
     dark: '다크',
@@ -53,8 +65,13 @@ const STRINGS: Strings<Key> = {
   },
   en: {
     title: 'Settings',
+    country: 'Where you live',
+    livesKR: 'Prices show in won (₩).',
+    livesUS: 'Prices show in dollars ($).',
     language: 'Language · 언어',
-    currency: 'Currency',
+    currency: 'Money',
+    seeingUSD: 'You’re seeing dollars, not won.',
+    seeingKRW: 'You’re seeing won, not dollars.',
     theme: 'Theme',
     system: 'Auto',
     dark: 'Dark',
@@ -106,12 +123,23 @@ export default function SettingsScreen() {
   // Bumped after "Reset all data" so sections holding local drafts start over from the reset settings.
   const [resets, setResets] = useState(0);
   const set = <K extends keyof Settings>(key: K) => (value: Settings[K]) => updateSettings({ [key]: value });
+  // A grown-up picked the other money: the money note says so, and the country note (which would contradict it) hides.
+  const overridden = moneyOverridden(settings.country, settings.currency);
 
   return (
     <main className="screen settings">
       <TopBar title={t('title')} back />
       <div className="screen-pad stack-24">
         <div className="surface settings-group">
+          <Field
+            id="settings-country"
+            label={t('country')}
+            note={overridden ? undefined : t(settings.country === 'KR' ? 'livesKR' : 'livesUS')}
+            value={settings.country}
+            options={countryOptions(settings.uiLang)}
+            // The store also switches the money and the search language to the new country's.
+            onChange={set('country')}
+          />
           <Field
             id="settings-lang"
             label={t('language')}
@@ -125,11 +153,9 @@ export default function SettingsScreen() {
           <Field
             id="settings-currency"
             label={t('currency')}
+            note={overridden ? t(settings.currency === 'USD' ? 'seeingUSD' : 'seeingKRW') : undefined}
             value={settings.currency}
-            options={[
-              { value: 'USD', label: '$ USD' },
-              { value: 'KRW', label: '₩ KRW' },
-            ]}
+            options={currencyOptions(settings.uiLang, settings.country)}
             onChange={set('currency')}
           />
           <Field
@@ -146,7 +172,8 @@ export default function SettingsScreen() {
           <Field
             id="settings-search"
             label={t('searchLang')}
-            note={t('searchLangNote')}
+            // Only for kids who may hold Korean cards (like the Search screen's note): Korea, or the Korean UI.
+            note={settings.country === 'KR' || settings.uiLang === 'ko' ? t('searchLangNote') : undefined}
             // Korean cards are looked up in the JA data, so a stored 'ko' shows as 日本語.
             value={settings.searchLang === 'en' ? 'en' : 'ja'}
             options={[
@@ -169,10 +196,10 @@ export default function SettingsScreen() {
             <ul className="settings-credits">
               {CREDITS.map((c) => (
                 <li key={c.name}>
-                  <a className="link settings-ext" href={c.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink kind="site" site={c.name} className="link settings-ext" href={c.url}>
                     {c.name}
                     <Icon name="external-link" size={14} />
-                  </a>
+                  </ExternalLink>
                   <span className="small muted">{t(c.key)}</span>
                 </li>
               ))}

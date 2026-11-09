@@ -172,6 +172,29 @@ describe('fetchEbaySummary', () => {
     expect((await fetchEbaySummary('https://w.example', 'q')).buyNow.lowestShipping).toBeNull();
   });
 
+  it('asks for shipping to Korea with &country=KR; a kid in the US sends no country (old URLs and cache keys)', async () => {
+    const fetchFn = stubFetch(async () => jsonResponse(summary));
+    await fetchEbaySummary('https://w.example', 'Hawlucha 084/187', undefined, 'KR');
+    await fetchEbaySummary('https://w.example/ebay/', 'Hawlucha 084/187', undefined, 'US');
+    await fetchEbaySummary('https://w.example', 'Hawlucha 084/187');
+    expect(fetchFn.mock.calls.map((c) => c[0])).toEqual([
+      'https://w.example/ebay?q=Hawlucha%20084%2F187&country=KR',
+      'https://w.example/ebay?q=Hawlucha%20084%2F187',
+      'https://w.example/ebay?q=Hawlucha%20084%2F187',
+    ]);
+  });
+
+  it('reads where shipping goes; an older worker without shipTo priced it to the US', async () => {
+    const shipToOf = async (shipTo: unknown) => {
+      stubFetch(async () => jsonResponse(shipTo === undefined ? summary : { ...summary, shipTo }));
+      return (await fetchEbaySummary('https://w.example', 'q', undefined, 'KR')).shipTo;
+    };
+    expect(await shipToOf('KR')).toBe('KR');
+    expect(await shipToOf('US')).toBe('US');
+    expect(await shipToOf(undefined)).toBe('US');
+    for (const odd of ['kr', 'JP', 82, null, { country: 'KR' }]) expect(await shipToOf(odd)).toBe('US');
+  });
+
   it('accepts a pasted URL without scheme or with the /ebay path', async () => {
     const fetchFn = stubFetch(async () => jsonResponse(summary));
     await fetchEbaySummary(' cardcheck-ebay.kid.workers.dev ', 'q1');

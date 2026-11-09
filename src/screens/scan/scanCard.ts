@@ -52,6 +52,13 @@ const TURN_PASSES = 2;
  * first look, so a slow phone still gets them. Worst case: first look + this + the try still running (≤ 6 passes).
  */
 const EXTRA_TRIES_BUDGET_MS = 10_000;
+/**
+ * Once a number was read, the zoomed and turned looks only add cards to pick from: they stop starting this long after
+ * the first look ends, so a slow phone doesn't run all 4 looks. The second look (the one that confirms the best read
+ * and can open the card directly) still starts until EXTRA_TRIES_BUDGET_MS, so the worst case stays first look + 10 s +
+ * the try still running.
+ */
+const READ_TRIES_BUDGET_MS = 8_000;
 /** A crop narrower than this (a 1080p camera frame gives ~720 px) misreads digits often: a sure look needs a second that agrees. */
 export const CONFIRM_BELOW_PX = 1000;
 /**
@@ -189,6 +196,28 @@ function settled<T extends Pick<Read, 'r' | 'sure'>>(reads: T[], confirm: boolea
   return agree.length && !conflict ? sure : undefined;
 }
 
+const sameCards = (a: CardBrief[], b: CardBrief[]) =>
+  a.length === b.length && a.every((c) => b.some((d) => cardKey(c) === cardKey(d)));
+
+/**
+ * Two looks that read the same number (leading zeros aside) with a fitting total and found the same cards, more than
+ * one (an English "189/198" is in several sets): more looks would most likely repeat them, so the scan ends there and
+ * the picker shows those cards. One card found twice keeps looking (within the budget): a later look that reads the
+ * set code right opens it (camera tests: 2 of 11 direct opens came from the 4th look after two agreeing ones).
+ * Never makes a scan sure.
+ */
+function agreed(reads: Pick<Read, 'r'>[]): boolean {
+  return reads.some(({ r: a }, i) =>
+    reads.slice(i + 1).some(
+      ({ r: b }) =>
+        a.candidates.length > 1 &&
+        digits(a.code.number) === digits(b.code.number) &&
+        totalsFit(a.code.total, b.code.total) &&
+        sameCards(a.candidates, b.candidates),
+    ),
+  );
+}
+
 /** Whether read `b` backs number `a`: the same digits, or its tail ("4" is "084" with the "08" lost). */
 const backs = (a: string | undefined, b: string | undefined) => {
   const [da, db] = [digits(a), digits(b)];
@@ -206,7 +235,10 @@ function lead<T extends Pick<Read, 'r' | 'sure'>>(reads: T[]): T | undefined {
  * and 270° (photo path; before the higher band when the first look read no digit at all) and the band above the usual
  * one (a card held small; photo path). On a live camera frame: the crop zoomed in on its center (LIVE_ZOOMS). Then a
  * second look at a resampled copy of the best read. On a small crop, a sure answer needs two looks that agree; anything
- * less goes to the picker, the cards more looks found first. At most 4 looks (24 OCR passes) on a live frame. Never throws.
+ * less goes to the picker, the cards more looks found first. The extra looks end early once two of them read the same
+ * number and found the same few cards (agreed). The zoomed and turned looks stop starting 8 s after the first look
+ * once a number was read (10 s while none was); the confirming second look starts until 10 s. At most 4 looks (24 OCR
+ * passes) on a live frame. Never throws.
  */
 export async function scanCard(card: HTMLCanvasElement, onProgress: ScanProgress, opts: ScanOptions = {}): Promise<ScanOutcome> {
   const { isStale, turned, live, now = () => Date.now() } = opts;
@@ -224,12 +256,17 @@ export async function scanCard(card: HTMLCanvasElement, onProgress: ScanProgress
 
   const extraStart = now();
   const inBudget = () => now() - extraStart < EXTRA_TRIES_BUDGET_MS;
+  const inReadBudget = () => now() - extraStart < READ_TRIES_BUDGET_MS;
   const reads: Read[] = first.code.number ? [{ r: first, card, sure: firstSure }] : [];
   const zoomed: HTMLCanvasElement[] = []; // freed at the end
   let turnedCard: HTMLCanvasElement | undefined;
   const over = () => !!isStale?.() || !!settled(reads, confirm);
-  /** Whether another extra look should start: not settled, and something read or time left. */
-  const more = () => !over() && (reads.length > 0 || inBudget());
+  /**
+   * Whether another extra look should start: not settled, no two looks agree yet, and time left (8 s once a number was
+   * read, else 10 s; the confirming second look always gets the 10 s).
+   */
+  const more = (confirming = false) =>
+    !over() && !agreed(reads) && (reads.length > 0 && !confirming ? inReadBudget() : inBudget());
 
   /** One look; kept when it read a number. */
   const look = async (crop: HTMLCanvasElement, l: Look, o: { band?: Rect; shown?: Rect; maxPasses?: number } = {}) => {
@@ -278,7 +315,7 @@ export async function scanCard(card: HTMLCanvasElement, onProgress: ScanProgress
     await look(z, 2, { shown: unzoom(CODE_STRIP, zoom) });
   }
 
-  if (more()) {
+  if (more(true)) {
     const from: Pick<Read, 'card' | 'band' | 'shown'> = lead(reads) ?? { card: turnedCard ?? card };
     const copy = resampled(from.card);
     await look(copy, 2, { band: from.band, shown: from.shown });

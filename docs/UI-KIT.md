@@ -129,15 +129,15 @@ All accept `className`. All built-in text is bilingual.
 | `Icon` | `name: IconName; size?=24; strokeWidth?=2; label?` | Lucide-style. Names: `home camera cards search settings chevron-left chevron-right plus minus trash refresh external-link image keyboard zap x check trending-up trending-down steady sparkles info globe sun moon gavel tag cart receipt flashlight`. Decorative unless `label` is given |
 | `TopBar` | `title?; back?: boolean \| string; onBack?; left?; right?` | Sticky, gains a blurred backdrop on scroll. `back` shows ‹ which calls `goBack(fallback)`; a string is the fallback path (default `/`). `left` is used only without a back button |
 | `TabBar` | — | Rendered by App. Home · raised Scan · My Cards. Hidden on `/scan`; no tab is active on `/card/…` |
-| `CardImage` | `image?; fallback?; photo?; alt; size?: 'thumb' \| 'full'; tier?; eager?; code?: { set; number }` | Tries TCGdex `${image}/low|high.webp` with CORS (cacheable by the service worker; a CORS failure is retried once as a plain image — every Japanese picture and a few English ones need that, so once a plain retry of an `assets.tcgdex.net/ja/` picture has loaded, later ones load plain from the start for the session: `cc:jaImgPlain`) → `fallback` (CardDetail.imageFallback) → `photo` (user data URL) → original card-back art. With `code`, the set code and number are printed on the card back whenever no picture shows, so look-alike backs can be told apart — pass it in every grid. Shimmers while loading, lazy by default (`eager` for the hero), always 63:88 with card corners. `tier` adds a glow in the tier color (gold for treasure). Width comes from the parent |
-| `TierBadge` | `tier: ValueTier; cheer?; size?: 'sm' \| 'md' \| 'lg'` | Emoji + price-band name: 🍃 동전 카드, ⭐ 과자값 카드, 💎 용돈 카드, 🔥 귀한 카드, 👑 보물 카드 (Pocket change, Snack money, Allowance, Prized, Treasure) — money words, never the rarity words printed on cards. `cheer` uses kind, upbeat copy, cheap cards included ("🍃 가격은 작아도 멋진 카드!", "👑 보물 카드예요! 소중히 보관해요!"). Treasure is a shimmering gold pill. Also exports `TIER_ORDER`, `TIER_EMOJI`, `TIER_LABELS` (use with `useStrings`) |
-| `ExternalLink` | `href; site: 'eBay' \| 'TCGplayer' \| 'Cardmarket'` + button props | The only way to link to a shop. Renders a `<button type="button" role="link">` with no href (so a long-press can't open the shop past the check); style it with your own class as if it were a link — a zero-specificity reset removes the button look. Opens a new tab (`window.open(…, 'noopener')`, http/https only) after a one-time-per-session grown-up check (Sheet: "{site}는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"). Adds a screen-reader "(새 탭)". Put an `external-link` icon in it and say near it that a website opens |
-| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (KRW by default in Korean), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `summary.converted` / `item.priceApprox`) adds a small "약 " before Korean won (on the baseline) and a small "≈ " otherwise — never both. `secondary` adds the other currency underneath ("≈ $0.04" under won; "약 60원" / "≈ ₩60" under dollars). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
+| `CardImage` | `image?; fallback?; photo?; alt; size?: 'thumb' \| 'full'; tier?; eager?; code?: { set; number }` | Tries TCGdex `${image}/low|high.webp` (cacheable by the service worker; `assets.tcgdex.net/ja/` pictures load plain from the start because their CORS header comes twice; an English CORS failure is retried once as a plain image) → `fallback` (CardDetail.imageFallback) → `photo` (user data URL) → original card-back art. With `code`, the set code and number are printed on the card back whenever no picture shows, so look-alike backs can be told apart — pass it in every grid. Shimmers while loading, lazy by default (`eager` for the hero), always 63:88 with card corners. `tier` adds a glow in the tier color (gold for treasure). Width comes from the parent |
+| `TierBadge` | `tier: ValueTier; cheer?; size?: 'sm' \| 'md' \| 'lg'` | Emoji + price-band name: 🍃 동전 카드, ⭐ 과자값 카드, 💎 용돈 카드, 🔥 귀한 카드, 👑 보물 카드 (Pocket change, Snack money, Allowance, Prized, Treasure) — money words, never the rarity words printed on cards. `cheer` uses kind, upbeat copy, cheap cards included ("🍃 가격은 작아도 멋진 카드!", "👑 보물 카드예요! 소중히 보관해요!"). Treasure is a shimmering gold pill. Also exports `TIER_ORDER`, `TIER_EMOJI`, `TIER_LABELS` (use with `useStrings`) and `useValueTier()`: `(usd) => ValueTier` in the money shown (settings.currency + live rates; $5 / 5,000원 for 용돈). Every tier shown goes through it, never a bare `valueTier(usd)` |
+| `ExternalLink` | `href; site: 'eBay' \| 'TCGplayer' \| 'Cardmarket'; kind?: 'shop'` or `href; site: string; kind: 'site'` + button props | The only way to leave the app: shops, and with `kind="site"` any other website (credits, the GitHub guide), where `site` can be any name and the question reads "{site} 웹사이트로 가요 · 앱 밖의 웹사이트가 열려요. 어른과 함께 볼까요?" / "Opening {site} · This opens a website outside the app. Look together with a grown‑up!". One OK per session covers both kinds. Renders a `<button type="button" role="link">` with no href (so a long-press can't open the shop past the check); style it with your own class as if it were a link — a zero-specificity reset removes the button look. Opens a new tab (`window.open(…, 'noopener')`, http/https only) after a one-time-per-session grown-up check (Sheet: "{site}는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"). Adds a screen-reader "(새 탭)". Put an `external-link` icon in it and say near it that a website opens |
+| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (follows the country: US dollars, Korea won; overridable), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `summary.converted` / `item.priceApprox`) adds a small "약 " in the Korean UI for any money (on the baseline) and a small "≈ " in the English UI — never both. `secondary` allows a small line underneath in the other money the kid knows (`secondaryCurrency(currency, country)`): dollars under won ("약 $0.04" / "$292.69"); under dollars, won only when the kid lives in Korea but switched to dollars ("약 398,500원"); none for a kid in the US who sees dollars (no ₩, and no `money-stack` gap). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
 | `SearchBar` | `onSubmit(q); value?; defaultValue?; onChange?; placeholder?; autoFocus?` | 58px pill with clear button; submits trimmed, non-empty text and closes the keyboard. Default placeholder "카드 이름이나 번호" |
 | `Sheet` | `open; onClose; title?; children` | Bottom sheet on native `<dialog>` (focus trap, inert page). Escape, backdrop tap and × call `onClose` |
 | `EmptyState` | `emoji; title; text?; action?` | Centered message for empty / not found / offline / error. `action` is usually one `.btn-primary .btn-lg .btn-block` |
 | `Skeleton` | `shape?: 'line' \| 'card' \| 'circle'; width?; height?` | Pair with visible loading copy ("카드 읽는 중…") |
-| `Confetti` | `count?=36` | One CSS burst from the center of the nearest positioned parent (`position: relative`). Change its `key` to fire again. Hidden for reduced motion. Use for `rare` tier ($5, 용돈 카드) or better, after a scan |
+| `Confetti` | `count?=36` | One CSS burst from the center of the nearest positioned parent (`position: relative`). Change its `key` to fire again. Hidden for reduced motion. Use for `rare` tier (용돈 카드: $5 / 5,000원 in the money shown) or better, after a scan |
 | `showToast(text, { icon?, durationMs? })` + `ToastHost` | — | Global toast above the tab bar, callable from anywhere: `showToast(t('added'), { icon: '✨' })`. App renders the host |
 | `ErrorBoundary` | `resetKey` | Used by App around screens; friendly crash screen with "Reopen" |
 | `cx(...classes)` | — | Joins truthy class names |
@@ -155,8 +155,29 @@ container and let the font shrink with the amount:
 }
 ```
 Used by the Home and My Cards totals, the best card price, the Card screen's big price (`.card-price` is the container),
-the eBay Buy It Now numbers (each `.card-ebay-stats` column is a container) and the Home "Recently viewed" tile prices
+the eBay Buy It Now numbers (`.card-ebay-stats` is the container; both numbers share `--ebay-chars`, the wider of the two) and the Home "Recently viewed" tile prices
 (each tile is a container; an ellipsis is the last resort).
+
+## Country picker and first-launch question
+
+The money follows where the kid lives (ARCHITECTURE.md › Country and money).
+
+- **Settings › 사는 곳 / Where you live** is the first field: a `Segmented` with flag + name from
+  `settings/regionOptions.ts` (`countryOptions(uiLang)`: "🇰🇷 한국 · 🇺🇸 미국" in Korean, "🇺🇸 USA · 🇰🇷 Korea" in English;
+  the order is fixed per language so it doesn't jump when picked). The flag goes in `SegmentOption.emoji`, which
+  Segmented renders `aria-hidden`, so screen readers hear "USA", not "regional indicator U, S". Its note says which money that means ("가격은
+  원(₩)으로 보여 줘요."). It calls `updateSettings({ country })`, which also resets the money and search language.
+- **돈 단위 / Money** (`currencyOptions(uiLang, country)`): "원 (₩) · 달러 ($)" / "$ Dollars · ₩ Won", the country's
+  money first. Never "$ USD" / "₩ KRW". When it differs from the country's (`moneyOverridden`), the country note hides
+  and this field says "원 대신 달러로 보고 있어요." / "You’re seeing dollars, not won."
+- **First-launch question** (`screens/home/CountryPrompt.tsx` + `.css`, mounted by Home only): a `Sheet` (so focus trap,
+  dialog role and h2 title come free) titled "어디에 살아요?" over "Where do you live?" (Korean on one line, English on
+  the next), a short line in both languages, and two big `.home-country-choice` buttons (≥ 140px tall, 48px flag hidden
+  from screen readers): "🇺🇸 미국 · USA" with a "$ 달러 · Dollars" pill and "🇰🇷 한국 · Korea" with "₩ 원 · Won". Each
+  text part carries its own `lang`, with the spaces outside the hidden "·" so they are read as separate words ("미국
+  USA"). It shows only when `needsCountryPrompt()` (no confident guess from the phone) and at most once per app load.
+  A pick always sets that country's money (the button names it; the search language follows only a real country
+  change); ×, backdrop and Escape keep the guess. Afterwards focus goes to Home's heading (`onClosed`; nothing on the page opened the sheet).
 
 ## Strings (i18n)
 
@@ -170,9 +191,10 @@ t('updated', { when: fmtRelativeTime(iso, lang) })   // "2시간 전 업데이�
 const lang = useUiLang();                            // 'ko' | 'en', e.g. for names.translateCardName
 ```
 
-Define `STRINGS` at module level (stable reference). Card names stay in the card's language; for JA/KO cards show
-the name in the UI language as a subtitle (`translateCardName`, or `nameInUiLang` from `lib/localName` when the card
-has no `dexIds`). English counts need a singular string: `count1: '1 card'` next to `count: '{n} cards'`.
+Define `STRINGS` at module level (stable reference). Card names everywhere use `screens/card/format.cardNames`, the
+Card screen's order: JA/KO cards lead with the name in the UI language ("루차불" / "Hawlucha") over the printed name
+("ルチャブル"); EN cards keep the English name (+ the Korean one under it in the Korean UI). Without `dexIds` it matches
+the name (`nameInUiLang`). English counts need a singular string: `count1: '1 card'` next to `count: '{n} cards'`.
 
 ## Router
 
@@ -207,21 +229,25 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 | Leaving the app | eBay 웹사이트가 열려요 · 어른과 함께 봐요 | Opens the eBay website · Look with a grown-up |
 | Price moved | 요즘 올랐어요 ▲25% / 요즘 내렸어요 ▼12% | Up lately ▲25% / Down lately ▼12% |
 | Couldn't save | 앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요. | Oops, My Cards couldn't be saved. Ask a grown-up to check the phone's storage. |
-| Scan tip | 아래쪽 작은 번호(084/187)를 읽어요. | We read the small number at the bottom, like 084/187. |
+| Scan tip (example follows the country: KR sv8a 084/187, US 199/165; the code chip and the particle after it never wrap apart) | 카드 아래 작은 번호(예: sv8a 084/187)를 읽어요 | We read the small number at the bottom, like 199/165 |
+| Where you live (Settings note) | 가격은 원(₩)으로 보여 줘요. / 가격은 달러($)로 보여 줘요. | Prices show in won (₩). / Prices show in dollars ($). |
+| Money overridden (Settings note) | 원 대신 달러로 보고 있어요. | You’re seeing dollars, not won. |
+| eBay shipping, kid in Korea (none in the US) | 한국까지 오는 배송비로 계산했어요 / 미국 eBay 가격이에요 · 한국으로 받으면 배송비가 더 들어요 | Shipping is priced to Korea / Prices from eBay US · Shipping to Korea costs extra |
 | Scan title | 카드를 네모에 꽉 맞춰요 | Fit the card in the box |
 | OCR didn't load | 앗, 번호 읽기 도구를 못 불러왔어요 | Oops, the number reader didn't load |
 | OCR still downloading | 번호 읽기 도구를 아직 받고 있어요 · 조금 뒤에 다시 찍어 봐요 | The number reader is still loading · Try scanning again in a minute |
-| Approximate price | 약 4,760원 (Korean UI, won) | ≈ $3.50 / ≈ ₩4,760 |
+| Approximate price | 약 4,760원 / 약 $3.50 (Korean UI, any money) | ≈ $3.50 / ≈ ₩4,760 |
 | Shipping | 배송비 1,700원 포함 · 무료 배송 · 배송비 별도 | incl. ₩1,700 shipping · Free shipping · + shipping |
 
 ## Motion & accessibility
 
-- Enter with `.pop-in` / `.fade-in`; price counts up (`<Money animate>`); a scanned card of the `rare` tier ($5) or better gets `<Confetti>`; every
+- Enter with `.pop-in` / `.fade-in`; price counts up (`<Money animate>`); a scanned card of the `rare` tier ($5 / 5,000원) or better gets `<Confetti>`; every
   tier gets a glow in its color.
   Global CSS shortens all animation under `prefers-reduced-motion`; don't add JS motion without checking it.
 - Icon-only buttons need `aria-label`. Toggle chips use `aria-pressed`. Use `<button>` for actions, `<Link>` for
-  navigation, `<ExternalLink site="eBay">` for eBay/TCGplayer (a button with `role="link"`; never a bare
-  `target="_blank"` shop link or `<a href>` to a shop: kids get the grown-up check first). Docs links (GitHub guide) may stay plain `<a target="_blank" rel="noopener noreferrer">`.
+  navigation, `<ExternalLink site="eBay">` for eBay/TCGplayer and `<ExternalLink kind="site" site="GitHub">` for any
+  other website (a button with `role="link"`; never a bare `target="_blank"` link or `<a href>` out of the app: kids get
+  the grown-up check first).
 - One `<h1>` per screen: TopBar's `title`, or the screen's own main heading when its TopBar has no title (Home's
   wordmark, the card name on the Card screen, the scan step titles). Sections use `<h2 className="h2">`.
 - Don't rely on color alone for up/down: pair with ▲/▼ or the trending icons.

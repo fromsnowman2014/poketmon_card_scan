@@ -3,14 +3,14 @@ import { CardImage } from '../../components/CardImage';
 import { Icon } from '../../components/Icon';
 import { Money } from '../../components/Money';
 import { Sheet } from '../../components/Sheet';
+import { useValueTier } from '../../components/TierBadge';
 import { showToast } from '../../components/Toast';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
-import { valueTier } from '../../lib/pricing';
 import { Link } from '../../lib/router';
 import { removeFromCollection, setQuantity } from '../../lib/store';
 import type { CollectionItem } from '../../lib/types';
 import { variantLabel } from '../card/format';
-import { uiName } from './itemName';
+import { itemNames } from './itemName';
 
 type Key =
   | 'noPrice'
@@ -66,8 +66,10 @@ interface TileProps {
 function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
-  const tier = item.priceUsd === null ? null : valueTier(item.priceUsd);
-  const sub = uiName(item, lang) ?? item.setName;
+  const tierOf = useValueTier();
+  const tier = item.priceUsd === null ? null : tierOf(item.priceUsd);
+  // Same name order as the Card screen title: "루차불" over "ルチャブル" in Korean; the set when there is no second name.
+  const { title, subtitle } = itemNames(item, lang);
   const body: ReactNode = (
     <>
       <span className="collection-art">
@@ -75,15 +77,15 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
           image={item.image}
           fallback={item.imageFallback}
           photo={photo}
-          alt={item.name}
+          alt={title}
           size="thumb"
           code={{ set: item.setId, number: item.localId }}
         />
         {showVariant && <span className="collection-variant">{variantLabel(item.variant, lang)}</span>}
         {item.qty > 1 && !editing && <span className="collection-qty">×{item.qty}</span>}
       </span>
-      <span className="collection-name truncate">{item.name}</span>
-      <span className="collection-sub truncate">{sub}</span>
+      <span className="collection-name truncate">{title}</span>
+      <span className="collection-sub truncate">{subtitle ?? item.setName}</span>
       <span className="collection-price">
         {tier && <span className={`tier-dot tier-${tier}`} aria-hidden="true" />}
         {item.priceUsd === null ? <span className="muted">{t('noPrice')}</span> : <Money usd={item.priceUsd} approx={item.priceApprox} />}
@@ -106,14 +108,14 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
           type="button"
           className="btn btn-icon collection-remove pop-in"
           onClick={() => onRemove(item)}
-          aria-label={`${t('remove')}: ${item.name}`}
+          aria-label={`${t('remove')}: ${title}`}
         >
           <Icon name="trash" size={18} />
         </button>
       )}
       {editing && (
         <div className="collection-edit pop-in">
-          <div className="collection-stepper" role="group" aria-label={item.name}>
+          <div className="collection-stepper" role="group" aria-label={title}>
             <button
               type="button"
               className="btn btn-icon"
@@ -151,6 +153,7 @@ export interface CardGridProps {
 /** Two-column grid of saved cards; in edit mode each card gets a − / + stepper and a remove button. */
 export function CardGrid({ items, thumbs, editing }: CardGridProps) {
   const t = useStrings(STRINGS);
+  const lang = useUiLang();
   const [removing, setRemoving] = useState<CollectionItem | null>(null);
   const variantsOf = useMemo(() => {
     const count = new Map<string, number>();
@@ -182,7 +185,7 @@ export function CardGrid({ items, thumbs, editing }: CardGridProps) {
       <Sheet open={!!removing} onClose={() => setRemoving(null)} title={t('confirmTitle')}>
         {removing && (
           <div className="stack-16">
-            <p className="small muted">{t('confirmText', { name: removing.name })}</p>
+            <p className="small muted">{t('confirmText', { name: itemNames(removing, lang).title })}</p>
             <div className="stack-8">
               <button type="button" className="btn btn-lg btn-block collection-danger" onClick={confirmRemove}>
                 <Icon name="trash" />

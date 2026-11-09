@@ -161,23 +161,64 @@ function changePct(cm: CardmarketPrice | null | undefined, marketUsd: number): n
   return Math.abs(pct) >= TREND_MIN_PCT && Math.abs(pct) <= TREND_MAX_PCT ? pct : null;
 }
 
-/** Cardmarket's headline number (EUR): trend, else the averages. */
-const cardmarketMarket = (cm: CardmarketPrice) => cm.trend ?? cm.avg30 ?? cm.avg ?? cm.avg7;
-
+const present = (xs: (number | null)[]) => xs.filter((x): x is number => x !== null);
 const maxOf = (xs: (number | null)[]) => {
-  const ns = xs.filter((x): x is number => x !== null);
+  const ns = present(xs);
   return ns.length ? Math.max(...ns) : null;
 };
 const minOf = (xs: (number | null)[]) => {
-  const ns = xs.filter((x): x is number => x !== null);
+  const ns = present(xs);
   return ns.length ? Math.min(...ns) : null;
+};
+const median = (xs: (number | null)[]) => {
+  const ns = present(xs).sort((a, b) => a - b);
+  const m = ns.length >> 1;
+  return ns.length === 0 ? null : ns.length % 2 ? ns[m] : (ns[m - 1] + ns[m]) / 2;
 };
 
 /**
  * A "highest price" above this many times the market price is a stray listing (a lone $95 Direct copy of a $2 promo,
- * a 999 placeholder, a Cardmarket spike), not what the card sells for.
+ * a 999 placeholder, a Cardmarket spike), not what the card sells for. On Cardmarket the same goes the other way: an
+ * average below a third of the market price is a lone 2-cent sale, not the usual low.
  */
 const HIGH_MAX_RATIO = 3;
+
+/**
+ * Cardmarket's trend, unless the recent sales (avg1, avg7, avg30) say it is junk: under a third of their median, or
+ * over 3× every one of them (HIGH_MAX_RATIO). Cheap Japanese cards sell rarely, and their trend can be €0.02 while
+ * they sell for €0.18–0.30 (SV8a-092), or €4.87 while they sell for €0.08–0.12 (SV2a-148).
+ */
+function cardmarketTrend(cm: CardmarketPrice): number | null {
+  const recent = [cm.avg1, cm.avg7, cm.avg30];
+  const mid = median(recent);
+  const top = maxOf(recent);
+  if (cm.trend === null || mid === null || top === null) return cm.trend;
+  return cm.trend * HIGH_MAX_RATIO < mid || cm.trend > top * HIGH_MAX_RATIO ? null : cm.trend;
+}
+
+/** A cheapest listing from this much up can stand in for averages nobody sells near (below it, a few cents don't matter). */
+const LISTED_MIN_EUR = 1;
+
+/**
+ * Averages that look filled in rather than measured: no all-time average and the same number for the week, the month
+ * (and the day). Some foil products (Poké Ball / Master Ball reverse) carry these, e.g. €0.25 everywhere.
+ */
+function placeholderAverages(cm: CardmarketPrice): boolean {
+  return cm.avg === null && cm.avg7 !== null && cm.avg7 === cm.avg30 && (cm.avg1 === null || cm.avg1 === cm.avg7);
+}
+
+/**
+ * Cardmarket's headline number (EUR): the trend, else the averages. A junk trend (cardmarketTrend) gives way to the
+ * week's or the month's average; with neither (only one day's average to judge by), the trend stays. When the averages
+ * look like placeholders and even the cheapest copy for sale costs more than 3× them (and at least €1), nobody sells
+ * near them (€0.25 for a card whose cheapest copy is €40): the cheapest copy is then the honest price. Real averages are
+ * never replaced by a single listing.
+ */
+function cardmarketMarket(cm: CardmarketPrice): number | null {
+  const market = cm.trend === null ? cm.avg30 ?? cm.avg ?? cm.avg7 : cardmarketTrend(cm) ?? cm.avg7 ?? cm.avg30 ?? cm.trend;
+  const unsold = market !== null && cm.low !== null && cm.low >= LISTED_MIN_EUR && cm.low > HIGH_MAX_RATIO * market;
+  return unsold && placeholderAverages(cm) ? cm.low : market;
+}
 
 function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketPrice | null | undefined, rates: Rates): PriceSummary {
   const toUsd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
@@ -185,7 +226,7 @@ function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketP
   // TCGplayer's highPrice is the highest listing and often a 999/10000 placeholder. Without a sane one, the highest
   // sane number we have: mid, the cheapest Direct listing or what the card sells for on Cardmarket — each one checked
   // on its own (a spiky Cardmarket avg doesn't hide a sane trend), and the market price when none passes.
-  const fallback = [tcg.mid, tcg.directLow, ...(cm ? [cm.avg, cm.avg30, cm.trend].map(toUsd) : [])];
+  const fallback = [tcg.mid, tcg.directLow, ...(cm ? [cm.avg, cm.avg30, cardmarketTrend(cm)].map(toUsd) : [])];
   const high = sane(tcg.high) ?? maxOf(fallback.map(sane));
   // The trend comes from Cardmarket (another market): only when its price is in the same ballpark.
   const cmMarket = cm ? toUsd(cardmarketMarket(cm)) : null;
@@ -202,14 +243,19 @@ function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketP
 }
 
 function summarizeCardmarket(cm: CardmarketPrice, market: number, rates: Rates): PriceSummary {
-  // Cardmarket's raw "low" is often a 0.02 junk listing; use the usual range of recent averages instead.
-  const usual = [cm.avg1, cm.avg7, cm.avg30, cm.trend, market];
+  // Cardmarket's raw "low" is often a 0.02 junk listing; use the usual range of recent averages instead, each one
+  // within 3× of the market price either way (a lone 2-cent sale or an old spike is not the usual range). One day's
+  // average is left out: on a cheap card it is a single sale (€0.02, or €5.39 for a €1.29 card), and it can only
+  // matter when it is the odd one out — the week's average already counts that day.
+  const near = (eur: number | null) =>
+    eur !== null && eur <= market * HIGH_MAX_RATIO && eur * HIGH_MAX_RATIO >= market ? eur : null;
+  const usual = [cm.avg7, cm.avg30, cardmarketTrend(cm), market].map(near);
   // Exact USD, not whole cents: €0.04 is $0.0447 → 60원, where $0.04 would show 50원. formatMoney rounds for display.
   const usd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
   return {
     market: usd(market),
     low: usd(minOf(usual)),
-    high: usd(maxOf([...usual, cm.avg])),
+    high: usd(maxOf([...usual, near(cm.avg)])),
     changePct: changePct(cm, eurToUsd(market, rates)),
     source: 'cardmarket',
     converted: true,
@@ -285,21 +331,41 @@ export function applyRates<T extends { variants: CardVariant[] }>(card: T, rates
   };
 }
 
-const TIERS: [number, ValueTier][] = [
-  [100, 'treasure'],
-  [25, 'super'],
-  [5, 'rare'],
-  [1, 'nice'],
-];
+// Thresholds in the money the kid knows, so a tier reads right in their own currency.
+// US: under $1 pocket change, $5 snack money, $25 allowance, $100 prized, then treasure.
+// KR: under 1,000원 (coins), 5,000원 (a snack), 30,000원 (an allowance), 150,000원 (precious), then treasure.
+const TIERS: Record<DisplayCurrency, [number, ValueTier][]> = {
+  USD: [
+    [100, 'treasure'],
+    [25, 'super'],
+    [5, 'rare'],
+    [1, 'nice'],
+  ],
+  KRW: [
+    [150_000, 'treasure'],
+    [30_000, 'super'],
+    [5_000, 'rare'],
+    [1_000, 'nice'],
+  ],
+};
+
+/** The amount formatMoney shows, as a number: whole cents in USD, 10/100-won steps in KRW. */
+function shownAmount(usd: number, currency: DisplayCurrency, rates: Rates): number {
+  if (currency === 'USD') return Math.round(usd * 100) / 100;
+  const krw = usd * rates.KRW;
+  const step = Math.abs(krw) < 10000 ? 10 : 100;
+  return Math.round(krw / step) * step;
+}
 
 /**
- * Kid-friendly value tier: common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100. Compares whole cents, like
- * the dollar amount shown ($0.996 shows as "$1.00" and is "nice").
+ * Kid-friendly value tier in the display currency. USD: common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100.
+ * KRW: common <1,000원, nice <5,000원, rare <30,000원, super <150,000원, treasure ≥150,000원. Compares the amount as
+ * shown ($0.996 shows as "$1.00" and is "nice"), so the tier always matches the number on screen.
  */
-export function valueTier(usd: number | null | undefined): ValueTier {
+export function valueTier(usd: number | null | undefined, currency: DisplayCurrency = 'USD', rates: Rates = getRatesSync()): ValueTier {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return 'common';
-  const shown = Math.round(usd * 100) / 100;
-  return TIERS.find(([min]) => shown >= min)?.[1] ?? 'common';
+  const shown = shownAmount(usd, currency, rates);
+  return TIERS[currency].find(([min]) => shown >= min)?.[1] ?? 'common';
 }
 
 const USD_CENTS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -325,7 +391,8 @@ function koWon(krw: number): string {
 
 /**
  * "$0.45", "$12.34", "$1,234", "₩16,500", "—" for missing; approx adds "≈ ".
- * With `lang: 'ko'` and KRW, uses Korean style instead: "16,500원", "198만 원", approx "약 16,500원".
+ * With `lang: 'ko'` and KRW, uses Korean style instead: "16,500원", "198만 원". The Korean UI writes "about" one way
+ * for every currency: approx "약 16,500원", "약 $22.30".
  */
 export function formatMoney(
   usd: number | null | undefined,
@@ -335,16 +402,10 @@ export function formatMoney(
 ): string {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return '—';
   let text: string;
-  const ko = currency === 'KRW' && opts.lang === 'ko';
-  if (currency === 'KRW') {
-    const krw = usd * rates.KRW;
-    const step = Math.abs(krw) < 10000 ? 10 : 100;
-    const rounded = Math.round(krw / step) * step;
-    text = ko ? koWon(rounded) : KRW.format(rounded);
-  } else {
-    const rounded = Math.round(usd * 100) / 100;
-    text = Math.abs(rounded) >= 1000 ? USD_WHOLE.format(rounded) : USD_CENTS.format(rounded);
-  }
+  const ko = opts.lang === 'ko';
+  const rounded = shownAmount(usd, currency, rates);
+  if (currency === 'KRW') text = ko ? koWon(rounded) : KRW.format(rounded);
+  else text = Math.abs(rounded) >= 1000 ? USD_WHOLE.format(rounded) : USD_CENTS.format(rounded);
   if (!opts.approx) return text;
   return ko ? `약 ${text}` : `≈ ${text}`;
 }

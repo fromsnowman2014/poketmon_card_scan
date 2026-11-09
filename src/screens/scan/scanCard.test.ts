@@ -437,6 +437,127 @@ describe('scanCard on a small crop (a live camera frame)', () => {
   });
 });
 
+describe('scanCard ends the extra looks early', () => {
+  /** A read with no set code: never sure by itself, so it goes to the picker. */
+  const noSet: PrintedCode = { number: '084', total: '187', lang: 'ja' };
+  const misread054: PrintedCode = { setCode: 'SV8a', number: '054', total: '187', lang: 'ja' };
+  const iron = card('SV8a-054', '054', 'SV8a');
+  const four = card('SV8a-004', '004', 'SV8a');
+  const sureFor = (code: PrintedCode) => (code.setCode === 'SV8a' && code.total === '187' ? setScore('SV8a', 1) : []);
+  beforeEach(() => {
+    resolveSets.mockImplementation(async (code: PrintedCode) => sureFor(code));
+  });
+
+  // An English "189/198" is in several sets: two looks that find the same few cards end the scan.
+  const svi = { ...card('sv01-189', '189', 'sv01'), lang: 'en' as const };
+  const chilling = { ...card('swsh6-189', '189', 'swsh6'), lang: 'en' as const };
+  const en189: PrintedCode = { number: '189', total: '198', lang: 'en' };
+
+  it('stops once two looks read the same number and total and found the same few cards', async () => {
+    reads({
+      first: result(en189, [svi, chilling]),
+      zoom88: result({ ...en189 }, [chilling, svi]),
+      zoom80: result(en189, [svi, chilling]),
+      second: result(en189, [svi, chilling]),
+    });
+    const outcome = await scanCard(canvas(SMALL), () => undefined, { live: true });
+    expect(looksRun()).toEqual(['first', 'zoom88']); // 12 passes instead of 24
+    expect(outcome).toMatchObject({ sure: false, status: 'done', candidates: [svi, chilling], code: en189 });
+  });
+
+  it('takes a read that lost a zero or the last digit of the total as the same', async () => {
+    reads({ first: result(noSet, [hawlucha, ruins]), zoom88: result({ number: '84', total: '18' }, [ruins, hawlucha]) });
+    await scanCard(canvas(SMALL), () => undefined, { live: true });
+    expect(looksRun()).toEqual(['first', 'zoom88']);
+  });
+
+  it('keeps looking when the cards differ, the totals or numbers do not fit, or no card was found', async () => {
+    const run = async (a: [PrintedCode, CardBrief[]], b: [PrintedCode, CardBrief[]]) => {
+      identifyCard.mockReset();
+      reads({ first: result(...a), zoom88: result(...b) });
+      await scanCard(canvas(SMALL), () => undefined, { live: true });
+      return looksRun();
+    };
+    const all = ['first', 'zoom88', 'zoom80', 'second'];
+    const two = [svi, chilling];
+    expect(await run([en189, two], [en189, [svi]])).toEqual(all);
+    expect(await run([en189, two], [en189, [svi, card('sv02-189', '189', 'sv02')]])).toEqual(all);
+    expect(await run([en189, two], [{ ...en189, total: '195' }, two])).toEqual(all);
+    expect(await run([en189, two], [{ ...en189, number: '188' }, two])).toEqual(all);
+    expect(await run([{ number: '084', total: '18' }, []], [{ number: '084', total: '18' }, []])).toEqual(all);
+  });
+
+  it('keeps looking when two looks found one card: a later look may read its set code and open it', async () => {
+    // Camera test f85: the first look read only the set code, two more read "084/187" (one with "SV1a"), and the
+    // fourth read "SV8a 084/187": a direct open that stopping at the agreement would have turned into a question.
+    reads({
+      first: result({ setCode: 'SV8a', lang: 'ja' }, []),
+      zoom88: result(noSet, [hawlucha]),
+      zoom80: result({ ...sureCode, setCode: 'SV1a' }, [hawlucha]),
+      second: result(sureCode, [hawlucha]),
+    });
+    const outcome = await scanCard(canvas(SMALL), () => undefined, { live: true });
+    expect(looksRun()).toEqual(['first', 'zoom88', 'zoom80', 'second']);
+    expect(outcome).toMatchObject({ sure: true, candidates: [hawlucha], code: sureCode });
+  });
+
+  it('never opens a card because the looks stopped early', async () => {
+    // A sure misread first ("054"), then two looks that agree on "084": they end the scan, and it asks.
+    reads({ first: result(misread054, [iron]), zoom88: result(noSet, [hawlucha, ruins]), zoom80: result(noSet, [hawlucha, ruins]) });
+    const outcome = await scanCard(canvas(SMALL), () => undefined, { live: true });
+    expect(looksRun()).toEqual(['first', 'zoom88', 'zoom80']);
+    expect(outcome).toMatchObject({ sure: false, candidates: [hawlucha, ruins, iron], code: noSet });
+
+    // Looks that all lost the leading zeros ("4" for #004): the zeros a card prints are still needed.
+    identifyCard.mockReset();
+    const lost = result({ ...sureCode, number: '4' }, [four]);
+    reads({ first: lost, zoom88: lost, zoom80: lost, second: lost });
+    expect(await scanCard(canvas(SMALL), () => undefined, { live: true })).toMatchObject({ sure: false, candidates: [four] });
+  });
+
+  it('stops starting extra looks 8 s after the first look once a number was read', async () => {
+    let clock = 0;
+    identifyCard.mockImplementation(async (c, _p, o) => {
+      const look = lookOf(c, o);
+      clock += look === 'first' ? 2000 : 5000;
+      return look === 'zoom88' ? result(noSet, [hawlucha]) : result({}, []);
+    });
+    const outcome = await scanCard(canvas(SMALL), () => undefined, { live: true, now: () => clock });
+    // First look done at 2 s. zoom88 (0–5 s in) reads 084; zoom80 starts 5 s in; the second look would start 10 s in.
+    expect(looksRun()).toEqual(['first', 'zoom88', 'zoom80']);
+    expect(outcome).toMatchObject({ sure: false, candidates: [hawlucha] });
+  });
+
+  it('still confirms a number read late on a sideways photo, within the 10 s budget', async () => {
+    let clock = 0;
+    identifyCard.mockImplementation(async (c, _p, o) => {
+      const look = lookOf(c, o);
+      clock += look === 'first' ? 9000 : 4500;
+      return look === 'turn3' ? result(noSet, [hawlucha]) : result({}, []);
+    });
+    const turned = vi.fn((q: number) => ({ width: 700, turned: q }) as unknown as HTMLCanvasElement);
+    const outcome = await scanCard(canvas(BIG), () => undefined, { turned, now: () => clock });
+    // 9 s: first look done. turn1 (0–4.5 s in), turn3 (4.5–9 s in) reads 084: past 8 s, but the confirming second look
+    // starts until 10 s in (a slow phone still opens a sideways card directly when the looks agree).
+    expect(looksRun()).toEqual(['first', 'turn1', 'turn3', 'second']);
+    expect(outcome).toMatchObject({ sure: false, candidates: [hawlucha], card: { turned: 3 } });
+  });
+
+  it('keeps the worst case: a number read after 10 s gets no extra look', async () => {
+    let clock = 0;
+    identifyCard.mockImplementation(async (c, _p, o) => {
+      const look = lookOf(c, o);
+      clock += look === 'first' ? 9000 : 5000;
+      return look === 'turn3' ? result(noSet, [hawlucha]) : result({}, []);
+    });
+    const turned = vi.fn((q: number) => ({ width: 700, turned: q }) as unknown as HTMLCanvasElement);
+    const outcome = await scanCard(canvas(BIG), () => undefined, { turned, now: () => clock });
+    // 9 s: first look done. turn1 (0–5 s in), turn3 (5–10 s in) reads 084: 10 s in, no second look.
+    expect(looksRun()).toEqual(['first', 'turn1', 'turn3']);
+    expect(outcome).toMatchObject({ sure: false, candidates: [hawlucha], card: { turned: 3 } });
+  });
+});
+
 describe('looksSideways', () => {
   it('takes no digit at all, or text chopped into bits, as a card lying sideways', () => {
     expect(looksSideways('')).toBe(true);

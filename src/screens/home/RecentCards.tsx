@@ -1,12 +1,12 @@
 import { CardImage } from '../../components/CardImage';
 import { Money } from '../../components/Money';
+import { useValueTier } from '../../components/TierBadge';
 import { showToast } from '../../components/Toast';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
-import { translateCardName } from '../../lib/names';
-import { valueTier } from '../../lib/pricing';
 import { Link } from '../../lib/router';
 import { clearHistory } from '../../lib/store';
 import type { HistoryItem } from '../../lib/types';
+import { cardNames } from '../card/format';
 
 const STRINGS: Strings<'title' | 'clear' | 'cleared'> = {
   ko: { title: '최근 본 카드', clear: '지우기', cleared: '최근 본 카드를 지웠어요' },
@@ -17,6 +17,7 @@ const STRINGS: Strings<'title' | 'clear' | 'cleared'> = {
 export function RecentCards({ items }: { items: HistoryItem[] }) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
+  const tierOf = useValueTier();
 
   const clear = () => {
     clearHistory();
@@ -35,7 +36,8 @@ export function RecentCards({ items }: { items: HistoryItem[] }) {
       </div>
       <ul className="scroll-x home-recent">
         {items.map((item) => {
-          const name = (item.lang !== 'en' && translateCardName(item.name, item.dexIds, lang)) || item.name;
+          // The Card screen's title for this card (UI-language name first for JA cards).
+          const name = cardNames({ name: item.name, dexIds: item.dexIds ?? [] }, item.lang, lang).title;
           return (
             <li key={`${item.lang}:${item.id}`}>
               <Link to={`/card/${item.lang}/${encodeURIComponent(item.id)}`} className="home-recent-item">
@@ -48,7 +50,7 @@ export function RecentCards({ items }: { items: HistoryItem[] }) {
                 />
                 <span className="home-recent-name truncate">{name}</span>
                 <span className="home-recent-price">
-                  {item.priceUsd !== null && <span className={`tier-dot tier-${valueTier(item.priceUsd)}`} />}
+                  {item.priceUsd !== null && <span className={`tier-dot tier-${tierOf(item.priceUsd)}`} />}
                   <Money usd={item.priceUsd} approx={item.priceApprox} />
                 </span>
               </Link>

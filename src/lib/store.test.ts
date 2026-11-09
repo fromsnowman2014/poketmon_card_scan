@@ -31,11 +31,13 @@ class MemoryStorage implements Storage {
 
 let ls: MemoryStorage;
 let store: typeof import('./store');
+/** The phone's time zone as region.guessCountry sees it (pinned, so tests don't depend on the machine's zone). */
+let zone = 'UTC';
 
-async function freshStore(storage = new MemoryStorage(), language = 'ko-KR') {
+async function freshStore(storage = new MemoryStorage(), language = 'ko-KR', languages?: string[]) {
   ls = storage;
   vi.stubGlobal('localStorage', ls);
-  vi.stubGlobal('navigator', { language });
+  vi.stubGlobal('navigator', { language, languages: languages ?? [language] });
   vi.resetModules();
   store = await import('./store');
 }
@@ -84,21 +86,138 @@ function card(id = 'SV8a-084', variants: CardVariant[] = [variant('normal', 0.12
 
 beforeEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  zone = 'UTC';
+  const real = Intl.DateTimeFormat.prototype.resolvedOptions;
+  vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockImplementation(function (this: Intl.DateTimeFormat) {
+    return { ...real.call(this), timeZone: zone };
+  });
   await freshStore();
 });
 
 describe('settings', () => {
-  it('defaults from the browser language (Korean devices show won)', async () => {
+  it('defaults from the browser: UI language from the language, money from the country', async () => {
     expect(peek(store.useSettings)).toEqual({
       uiLang: 'ko',
+      country: 'KR',
       currency: 'KRW',
       searchLang: 'ja',
       ebayWorkerUrl: '',
       theme: 'system',
     });
     await freshStore(new MemoryStorage(), 'en-US');
-    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', currency: 'USD', searchLang: 'en' });
-    expect(ls.length).toBe(0); // defaults are not written until something changes
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', country: 'US', currency: 'USD', searchLang: 'en' });
+    // The first guess is saved right away: the country means where the kid was when the app first opened.
+    expect(JSON.parse(ls.getItem('cc:settings')!).data).toMatchObject({ country: 'US', currency: 'USD' });
+  });
+
+  it('does not ask on a trip abroad when the first guess was confident', async () => {
+    zone = 'Asia/Seoul';
+    await freshStore(new MemoryStorage(), 'ko', ['ko']); // a bare "ko" phone: only the time zone says Korea
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW' });
+    expect(store.needsCountryPrompt()).toBe(false);
+    zone = 'Asia/Tokyo';
+    await reload();
+    expect(store.needsCountryPrompt()).toBe(false);
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW' });
+  });
+
+  it('saves the first guess only when that is safe', async () => {
+    // A value this version can't read (newer app) is left alone.
+    const newer = JSON.stringify({ v: 2, data: { country: 'KR', currency: 'KRW' } });
+    ls.setItem('cc:settings', newer);
+    await reload();
+    peek(store.useSettings);
+    expect(ls.getItem('cc:settings')).toBe(newer);
+    // Full storage: no throw, and cached API data is not dropped to make room during a render.
+    await freshStore(new MemoryStorage(300));
+    ls.setItem('cc:cache:card:ja:1', JSON.stringify({ v: 'x'.repeat(60), exp: Date.now() + 60_000 }));
+    expect(() => peek(store.useSettings)).not.toThrow();
+    expect(ls.getItem('cc:cache:card:ja:1')).not.toBeNull();
+  });
+
+  it('keeps the first country on a trip abroad', async () => {
+    zone = 'Asia/Seoul';
+    await freshStore(new MemoryStorage(), 'ko-KR');
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW' });
+    zone = 'Pacific/Honolulu'; // on holiday: the phone now says US
+    await reload();
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW' });
+    expect(store.needsCountryPrompt()).toBe(false);
+  });
+
+  it('gives a Korean-speaking kid in the US Korean screens with dollars', async () => {
+    zone = 'America/Los_Angeles';
+    await freshStore(new MemoryStorage(), 'ko-KR');
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'ko', country: 'US', currency: 'USD', searchLang: 'en' });
+    zone = 'Asia/Seoul';
+    await freshStore(new MemoryStorage(), 'en-US');
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', country: 'KR', currency: 'KRW', searchLang: 'ja' });
+  });
+
+  it('switching country switches the money and search language, unless the same change sets them', () => {
+    store.updateSettings({ country: 'US' });
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'ko', country: 'US', currency: 'USD', searchLang: 'en' });
+    store.updateSettings({ currency: 'KRW' }); // a grown-up can still pick won
+    expect(peek(store.useSettings)).toMatchObject({ country: 'US', currency: 'KRW' });
+    store.updateSettings({ country: 'US' }); // same country: nothing resets
+    expect(peek(store.useSettings).currency).toBe('KRW');
+    store.updateSettings({ country: 'KR', currency: 'USD' });
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'USD', searchLang: 'ja' });
+    store.updateSettings({ country: 'JP' as never });
+    expect(peek(store.useSettings).country).toBe('KR');
+  });
+
+  it('keeps the saved money of settings saved before country existed, when the kid picked it', async () => {
+    // A Korean phone saved won + 日本語 search by default, so dollars + English were a pick.
+    ls.setItem('cc:settings', JSON.stringify({ v: 1, data: { uiLang: 'ko', currency: 'USD', searchLang: 'en', ebayWorkerUrl: '', theme: 'dark' } }));
+    await reload();
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'USD', searchLang: 'en', theme: 'dark' });
+    expect(JSON.parse(ls.getItem('cc:settings')!).data).toMatchObject({ country: 'KR', currency: 'USD' }); // saved once
+  });
+
+  it('gives older settings the country\'s money when the old app only saved its default', async () => {
+    // An English phone in Seoul: the old app saved dollars + English by default (whenever the theme changed).
+    zone = 'Asia/Seoul';
+    await freshStore(new MemoryStorage(), 'en-US');
+    ls.setItem('cc:settings', JSON.stringify({ v: 1, data: { uiLang: 'en', currency: 'USD', searchLang: 'en', ebayWorkerUrl: '', theme: 'dark' } }));
+    await reload();
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'en', country: 'KR', currency: 'KRW', searchLang: 'ja', theme: 'dark' });
+    // Won there was a pick (not the English default): kept.
+    ls.setItem('cc:settings', JSON.stringify({ v: 1, data: { uiLang: 'en', currency: 'KRW', searchLang: 'en', theme: 'light' } }));
+    await reload();
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW', searchLang: 'ja', theme: 'light' });
+    // A Korean phone in Los Angeles that saved the old Korean default (won + 日本語) gets dollars + English.
+    zone = 'America/Los_Angeles';
+    await freshStore(new MemoryStorage(), 'ko-KR');
+    ls.setItem('cc:settings', JSON.stringify({ v: 1, data: { uiLang: 'ko', currency: 'KRW', searchLang: 'ja', ebayWorkerUrl: 'https://w.example.dev' } }));
+    await reload();
+    expect(peek(store.useSettings)).toMatchObject({ uiLang: 'ko', country: 'US', currency: 'USD', searchLang: 'en', ebayWorkerUrl: 'https://w.example.dev' });
+  });
+
+  it('does not stop clearing when storage refuses to remove a key', () => {
+    store.addToCollection(card(), 'normal');
+    ls.removeItem = () => {
+      throw new DOMException('blocked', 'SecurityError');
+    };
+    expect(() => store.resetAllData()).not.toThrow();
+    expect(peek(store.useCollection)).toEqual([]);
+  });
+
+  it('asks for the country once, only when the phone gave no hint', async () => {
+    expect(store.needsCountryPrompt()).toBe(false); // ko-KR
+    await freshStore(new MemoryStorage(), 'de-DE');
+    expect(store.needsCountryPrompt()).toBe(true);
+    expect(peek(store.useSettings)).toMatchObject({ country: 'US', currency: 'USD' });
+    store.updateSettings({ country: 'KR' });
+    expect(store.needsCountryPrompt()).toBe(false);
+    expect(peek(store.useSettings)).toMatchObject({ country: 'KR', currency: 'KRW' });
+    await reload();
+    expect(store.needsCountryPrompt()).toBe(false);
+    store.resetAllData();
+    expect(store.needsCountryPrompt()).toBe(true);
+    store.markCountryAsked(); // dismissed: keep the guess
+    expect(store.needsCountryPrompt()).toBe(false);
   });
 
   it('persists a versioned envelope and rejects invalid values', async () => {
@@ -108,6 +227,7 @@ describe('settings', () => {
     expect(saved.v).toBe(1);
     expect(saved.data).toEqual({
       uiLang: 'ko',
+      country: 'KR',
       currency: 'KRW',
       searchLang: 'ja',
       ebayWorkerUrl: 'https://w.example.dev',

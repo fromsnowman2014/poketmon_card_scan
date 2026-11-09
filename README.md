@@ -12,13 +12,25 @@
 
 1. 📸 카드를 **사진으로 찍으면** (또는 이름 · 번호를 입력하면)
 2. 🔎 어떤 카드인지 찾아서
-3. 💰 **시세 · 최저가 · 최고가**를 크게 보여 줘요. (달러 / 원화)
+3. 💰 **시세 · 최저가 · 최고가**를 크게 보여 줘요. (미국에 살면 달러, 한국에 살면 원)
 4. 🛒 **eBay 경매 중 · 즉시구매 · 팔린 가격**을 버튼 하나로 바로 볼 수 있어요.
 5. 🗂️ 마음에 드는 카드는 **내 카드**에 모아서 전체 가치를 볼 수 있어요.
 
 - **완전 무료**, 가입 · 로그인 · 광고 없음. 내 카드 목록은 내 폰에만 저장돼요. ([어디에 저장되나요?](#내-카드는-어디에-저장되나요))
 - **일본어 · 한국어 · 영어 카드** 모두 지원해요. (한국 카드는 같은 세트 코드를 쓰는 일본판 데이터로 찾아요.)
 - 카드 글자 읽기(OCR)는 폰 안에서 처리돼요. 사진을 서버로 보내지 않아요.
+
+## 미국 어린이는 달러, 한국 어린이는 원
+
+- 앱이 **사는 곳**을 스스로 알아내서 그 나라 돈으로 가격을 보여 줘요. 폰의 **시간대**(서울 → 한국, 미국 시간대 → 미국)를
+  먼저 보고, 그다음 폰 언어의 지역(`ko-KR`, `en-US`)을 봐요. 화면 언어와는 따로예요.
+  - 미국에 사는 한국어 어린이는 **한국어 화면 + 달러($)**, 한국에 있는 영어 폰은 **영어 화면 + 원(₩)** 이에요.
+  - 폰이 힌트를 주지 않으면(예: 다른 나라 시간대) 처음 한 번만 **"어디에 살아요? 🇺🇸 / 🇰🇷"** 하고 물어봐요.
+- 바꾸고 싶으면 **설정 → 사는 곳**에서 🇰🇷 한국 / 🇺🇸 미국을 골라요. 돈 단위와 검색 언어가 그 나라에 맞게 같이 바뀌어요.
+  **돈 단위**만 따로 바꿀 수도 있어요. (예: 한국에 살면서 달러로 보기)
+- 가격 등급(동전 · 과자값 · 용돈 · 귀한 · 보물 카드)도 그 돈에 맞춰요. 원은 1,000원 · 5,000원 · 30,000원 · 150,000원, 달러는 $1 · $5 · $25 · $100 기준이에요.
+- (선택) eBay 워커를 쓰면 배송비를 **사는 나라까지** 계산해요. 한국에 살면 서울까지의 배송비로, 한국으로 보낼 수 있는 물건만 보여 줘요.
+  예전에 설치한 워커는 **새 버전으로 다시 배포**해야 해요 ([worker/README.md](worker/README.md)). 설정의 **연결 테스트**가 알려 줘요.
 
 ## 아이폰에 설치하기 (홈 화면에 추가)
 
@@ -46,14 +58,14 @@
 - 💡 **밝은 곳**에서 찍어요. 그림자가 지지 않게!
 - 🖼️ 카드가 **네모 칸에 꽉 차게** 맞춰요.
 - ✨ **반짝이 반사**가 없게 살짝 기울여요. 슬리브(카드 비닐)는 빼면 더 잘 읽혀요.
-- 🔢 앱은 카드 **왼쪽 아래의 작은 글자**를 읽어요. 예: `sv8a 084/187`. 이 부분이 또렷하게 나오게 찍어요.
+- 🔢 앱은 카드 **왼쪽 아래의 작은 글자**를 읽어요. 예: `sv8a 084/187` (영어 카드는 `MEW EN 199/165`). 이 부분이 또렷하게 나오게 찍어요.
 - 🙋 못 찾으면 **이름이나 번호를 직접 입력**해도 돼요. (`루차불`, `ルチャブル`, `Hawlucha`, `084/187` 모두 OK)
 
 ## 가격은 어디서 오나요?
 
 - 카드 정보와 가격은 [TCGdex](https://tcgdex.dev) 에서 가져와요. **매일 업데이트**돼요.
   - **TCGplayer** (미국, 달러) — 주로 영어 카드
-  - **Cardmarket** (유럽, 유로) — 일본 카드 포함. 원(또는 달러)으로 바꿔서 **약** 표시와 함께 보여 줘요. (예: `약 4,760원`, 달러는 `≈ $3.50`)
+  - **Cardmarket** (유럽, 유로) — 일본 카드 포함. 원(또는 달러)으로 바꿔서 **약** 표시와 함께 보여 줘요. (예: `약 4,760원`, `약 $3.50`. 영어 화면은 `≈ $3.50`)
 - 환율은 [open.er-api.com](https://open.er-api.com) (실패하면 Frankfurter)에서 가져와요.
 - **eBay**: 버튼을 누르면 eBay 검색 결과(경매 마감 임박순 · 즉시구매 최저가순 · 최근 팔린 순)가 열려요.
 
@@ -67,7 +79,7 @@
 ### (선택) eBay 실시간 가격
 
 무료 Cloudflare 워커를 한 번 설치하면 앱 안에서 **즉시구매 최저가와 경매 현황**을 바로 볼 수 있어요.
-(즉시구매 가격과 경매 현재가 모두 **미국 배송비 포함** 가격이에요. 배송비를 모르는 경매는 "배송비 별도"라고 보여 줘요.)
+(즉시구매 가격과 경매 현재가 모두 **사는 나라까지의 배송비 포함** 가격이에요: 미국이면 미국 안, 한국이면 서울까지. 배송비를 모르는 물건은 "배송비 별도"라고 보여 줘요.)
 부모님용 단계별 안내: **[worker/README.md](worker/README.md)**
 
 ## 처음 배포하기 (저장소 관리자용)
@@ -168,20 +180,28 @@ If the link still shows 404, the repo owner has to do the one-time [first deploy
 
 **Install on iPhone:** open the link in **Safari** → **Share** → **Add to Home Screen** → **Add**. Launch it from the home-screen icon and allow the camera.
 
+**Dollars for US kids, won for Korean kids:** the app works out where the kid lives and shows prices in that country's money —
+first from the phone's time zone (Seoul → Korea, a US time zone → US), then from the region in the phone's language (`ko-KR`, `en-US`),
+separately from the screen language. A Korean-speaking kid in Los Angeles gets Korean screens with dollars; an English phone in Seoul gets won.
+If the phone gives no hint, the app asks once: "Where do you live? 🇺🇸 / 🇰🇷". To change it, open **Settings → Where you live**: the money and
+the search language switch with it, and **Money** can still be changed on its own. Price tiers follow the money ($1 / $5 / $25 / $100, or
+1,000 / 5,000 / 30,000 / 150,000원). With the optional eBay worker, shipping is estimated to the kid's country (for Korea: to Seoul, and only
+listings that ship to Korea). A worker deployed before this needs a redeploy; Settings' **Test connection** tells you.
+
 **Where My Cards are saved:** only inside this app on this phone (no server, no account). The **Home Screen app and Safari keep
 separate data**: cards saved in a Safari tab do not move to the Home Screen app, so **add it to the Home Screen first and collect cards there.**
 Home Screen apps are not subject to Safari's 7-day storage limit (a Safari tab left unopened for 7+ days can lose its cards).
 **Settings → (Apps →) Safari → Clear History and Website Data deletes My Cards**, and so does deleting the Home Screen icon. Cards don't move to a new phone.
 
 **Scanning tips:** good light, fill the frame with the card, tilt to avoid glare (take it out of the sleeve if you can), and make sure the
-small code at the bottom-left — like `sv8a 084/187` — is sharp. You can always type the name or number instead.
+small code at the bottom-left — like `MEW EN 199/165` (Korean and Japanese cards: `sv8a 084/187`) — is sharp. You can always type the name or number instead.
 
-**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) and Cardmarket (EUR, converted and shown as approximate: "≈ $3.50", or "약 4,760원" in the Korean UI).
+**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) and Cardmarket (EUR, converted and shown as approximate: "≈ $3.50", or "약 4,760원" / "약 $3.50" in the Korean UI).
 **Honest limits:** there is no free sold-price API (use the eBay "Sold" link), prices are estimates that depend on condition and grading,
 and some Japanese cards have no price data. **Ask a grown-up before buying or selling.**
 
 **Optional live eBay prices:** deploy the free Cloudflare worker — step-by-step guide in [worker/README.md](worker/README.md).
-Buy It Now prices and current auction bids there include US shipping (an auction with unknown shipping says "+ shipping").
+Buy It Now prices and current auction bids there include shipping to the kid's country (within the US, or to Seoul for Korea; unknown shipping says "+ shipping").
 
 ### First deploy (repo owner)
 

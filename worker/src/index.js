@@ -1,6 +1,6 @@
 // CardCheck eBay proxy — Cloudflare Worker (module syntax, plain JS, no dependencies).
 //   GET /                       → health check: { name, ok, configured }
-//   GET /ebay?q=<keywords>[&graded=1] → EbaySummary (see src/lib/types.ts in the app)
+//   GET /ebay?q=<keywords>[&graded=1][&country=KR] → EbaySummary (see src/lib/types.ts in the app)
 // The browser cannot call the eBay Browse API itself (no CORS, and the client secret must stay private).
 // Abuse limits: q is at most MAX_Q chars, and each IP gets RATE_LIMIT_PER_MIN /ebay requests per minute.
 const TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token";
@@ -15,6 +15,22 @@ const AUCTION_LIMIT = 20;
 const BIN_LIMIT = 50;
 const RATE_LIMIT_PER_MIN = 30; // default; override with the RATE_LIMIT_PER_MIN var in wrangler.toml
 const RATE_WINDOW_MS = 60_000;
+
+// Where the kid lives (the app's settings.country, sent as &country=KR; anything else is the US). eBay estimates shipping
+// to that place and sorts by price + that shipping. eBay wants a postcode wherever a country uses them, and Korea does
+// (5 digits): 04524 is central Seoul. For Korea only listings that can ship there come back (the Browse API has no
+// "doesn't ship here" flag on a search result, so the deliveryCountry filter does it); a listing without a shipping
+// price for Korea (calculated shipping) keeps shipping: null, like in the US.
+const SHIP_TO = {
+  US: { ctx: "contextualLocation=country%3DUS%2Czip%3D10001", filter: "" },
+  KR: { ctx: "contextualLocation=country%3DKR%2Czip%3D04524", filter: ",deliveryCountry:KR" },
+};
+
+/** "KR" (any case) → "KR"; missing, unknown or garbage → "US" (the old behaviour). */
+function shipToOf(raw) {
+  const c = String(raw ?? "").trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(SHIP_TO, c) ? c : "US";
+}
 
 let tokenCache = { value: null, exp: 0 }; // per isolate
 const memCache = new Map(); // caches.default is a no-op on *.workers.dev, so keep a per-isolate copy too
@@ -65,11 +81,11 @@ async function getToken(env) {
 }
 
 /** `sort` "" = eBay Best Match (relevance, not price), used as an unbiased sample for the median. */
-async function search(env, token, q, buyingOption, sort, limit, retried = false) {
+async function search(env, token, q, buyingOption, sort, limit, shipTo, retried = false) {
   const u = new URL(SEARCH_URL);
   u.searchParams.set("q", q);
   u.searchParams.set("category_ids", CATEGORY);
-  u.searchParams.set("filter", `buyingOptions:{${buyingOption}}`);
+  u.searchParams.set("filter", `buyingOptions:{${buyingOption}}${SHIP_TO[shipTo].filter}`);
   if (sort) u.searchParams.set("sort", sort);
   u.searchParams.set("limit", String(limit));
   const res = await fetch(u, {
@@ -77,14 +93,14 @@ async function search(env, token, q, buyingOption, sort, limit, retried = false)
       Authorization: `Bearer ${token}`,
       "X-EBAY-C-MARKETPLACE-ID": env.MARKETPLACE || "EBAY_US",
       // eBay recommends a delivery location when sorting by price (shipping is part of the sort).
-      "X-EBAY-C-ENDUSERCTX": "contextualLocation=country%3DUS%2Czip%3D10001",
+      "X-EBAY-C-ENDUSERCTX": SHIP_TO[shipTo].ctx,
       "Accept-Language": "en-US",
     },
   });
   if (res.status === 401 && !retried) {
     // Token revoked or expired early: fetch a fresh one once.
     tokenCache = { value: null, exp: 0 };
-    return search(env, await getToken(env), q, buyingOption, sort, limit, true);
+    return search(env, await getToken(env), q, buyingOption, sort, limit, shipTo, true);
   }
   if (!res.ok) throw new Error(`browse ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json(); // { total, itemSummaries: [...] }
@@ -92,13 +108,27 @@ async function search(env, token, q, buyingOption, sort, limit, retried = false)
 
 const money = (m) => (m && m.value != null && Number.isFinite(Number(m.value)) ? Number(m.value) : null);
 
+/**
+ * The cheapest shipping eBay gives for the delivery place, in the listing's money; null when it doesn't say (no
+ * shippingOptions, calculated shipping without a cost) or only in another money, which can't be added to the price.
+ */
+function shippingCost(it, currency) {
+  const costs = (it.shippingOptions || [])
+    .map((o) => o?.shippingCost)
+    .filter((c) => !c?.currency || c.currency === currency)
+    .map(money)
+    .filter((n) => n != null && n >= 0);
+  return costs.length ? Math.min(...costs) : null;
+}
+
 /** eBay item → EbayListing. Optional strings are omitted (not null) to match the app's types. */
 function compact(it, isAuction) {
+  const currency = (isAuction ? it.currentBidPrice?.currency : null) || it.price?.currency || "USD";
   return {
     title: it.title,
     price: isAuction ? money(it.currentBidPrice) ?? money(it.price) : money(it.price),
-    currency: (isAuction ? it.currentBidPrice?.currency : null) || it.price?.currency || "USD",
-    shipping: money(it.shippingOptions?.[0]?.shippingCost),
+    currency,
+    shipping: shippingCost(it, currency),
     bidCount: isAuction ? it.bidCount ?? 0 : undefined,
     endsAt: it.itemEndDate || undefined,
     url: it.itemWebUrl,
@@ -120,6 +150,23 @@ function listings(items, isAuction, includeGraded) {
 /** Price + shipping (shipping counts as 0 when eBay doesn't say, e.g. calculated shipping). */
 const total = (it) => +(it.price + (it.shipping ?? 0)).toFixed(2);
 
+/**
+ * Shipping eBay can't price for Korea (calculated international shipping) is usually several dollars, not free. So in
+ * Korea, once at least MIN_KNOWN listings have a known cost (enough to say what buying it really costs), those come
+ * first and alone set the lowest and the median. With fewer, one pricey listing would decide both, so listings are
+ * ranked by price as in the US and an unknown cost is shown as "+ shipping" (lowestShipping null).
+ */
+const MIN_KNOWN = 3;
+const knownShipping = (items) => items.filter((it) => it.shipping != null);
+const preferKnown = (items, shipTo) => shipTo === "KR" && knownShipping(items).length >= MIN_KNOWN;
+
+const byTotal = (knownFirst) => (a, b) =>
+  (knownFirst ? (a.shipping == null) - (b.shipping == null) : 0) || total(a) - total(b);
+
+function withKnownShipping(items, shipTo) {
+  return preferKnown(items, shipTo) ? knownShipping(items) : items;
+}
+
 function median(nums) {
   if (!nums.length) return null;
   const s = [...nums].sort((a, b) => a - b);
@@ -130,12 +177,12 @@ function median(nums) {
 const searchUrl = (q, extra = "") =>
   `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&_sacat=${CATEGORY}${extra}`;
 
-async function summarize(env, q, includeGraded) {
+async function summarize(env, q, includeGraded, shipTo) {
   const token = await getToken(env);
   const [auc, bin] = await Promise.all([
-    search(env, token, q, "AUCTION", "endingSoonest", AUCTION_LIMIT),
+    search(env, token, q, "AUCTION", "endingSoonest", AUCTION_LIMIT, shipTo),
     // eBay's "price" sort is price + shipping to the delivery location set in search().
-    search(env, token, q, "FIXED_PRICE", "price", BIN_LIMIT),
+    search(env, token, q, "FIXED_PRICE", "price", BIN_LIMIT, shipTo),
   ]);
   const aucItems = listings(auc.itemSummaries, true, includeGraded);
   const cheapest = listings(bin.itemSummaries, false, includeGraded);
@@ -143,25 +190,27 @@ async function summarize(env, q, includeGraded) {
   // take the median from a Best Match sample instead (one extra eBay call, only for popular cards).
   const morePages = (bin.total ?? 0) > (bin.itemSummaries || []).length;
   const sample = morePages
-    ? listings((await search(env, token, q, "FIXED_PRICE", "", BIN_LIMIT)).itemSummaries, false, includeGraded)
+    ? listings((await search(env, token, q, "FIXED_PRICE", "", BIN_LIMIT, shipTo)).itemSummaries, false, includeGraded)
     : cheapest;
   const medianOf = sample.length >= 3 || !morePages ? sample : cheapest;
-  // Cheapest first by total cost; de-duplicated because a listing can be in both samples.
+  // Cheapest first by total cost (in Korea, known shipping first when there is enough of it); de-duplicated because a
+  // listing can be in both samples.
   const seen = new Set();
-  const binItems = [...cheapest, ...(morePages ? sample : [])]
-    .filter((it) => !seen.has(it.url) && seen.add(it.url))
-    .sort((a, b) => total(a) - total(b));
+  const unique = [...cheapest, ...(morePages ? sample : [])].filter((it) => !seen.has(it.url) && seen.add(it.url));
+  const binItems = unique.sort(byTotal(preferKnown(unique, shipTo)));
   const best = binItems[0];
   return {
     query: q,
+    // Where shipping in the totals goes to. Older workers leave it out (the app reads that as "US").
+    shipTo,
     fetchedAt: new Date().toISOString(),
     // count is eBay's total before junk filtering: "about this many listings".
     auctions: { count: auc.total ?? aucItems.length, items: aucItems.slice(0, MAX_ITEMS) },
     buyNow: {
       count: bin.total ?? cheapest.length,
-      // TOTAL costs (price + shipping), what a buyer actually pays in the US.
+      // TOTAL costs (price + shipping to shipTo), what a buyer there actually pays.
       lowest: best ? total(best) : null,
-      median: median(medianOf.map(total)),
+      median: median(withKnownShipping(medianOf, shipTo).map(total)),
       lowestShipping: best ? best.shipping ?? null : null,
       items: binItems.slice(0, MAX_ITEMS),
     },
@@ -218,10 +267,13 @@ export default {
     }
     // Graded slabs are left out unless asked for (graded=1) or the search itself names a grader ("PSA 10").
     const includeGraded = url.searchParams.get("graded") === "1" || GRADED.test(q);
+    const shipTo = shipToOf(url.searchParams.get("country"));
 
+    // The country is part of the key: US and Korean prices (different shipping, different listings) never mix.
     const key = new URL("https://cache.internal/ebay");
     key.searchParams.set("q", q.toLowerCase());
     key.searchParams.set("g", includeGraded ? "1" : "0");
+    key.searchParams.set("c", shipTo);
     const cacheKey = new Request(key.toString(), { method: "GET" });
     const cacheHeaders = { "Cache-Control": `public, max-age=${CACHE_TTL}` };
 
@@ -231,7 +283,7 @@ export default {
     if (hit) return json(request, env, await hit.json(), 200, { ...cacheHeaders, "X-Cache": "HIT" });
 
     try {
-      const body = await summarize(env, q, includeGraded);
+      const body = await summarize(env, q, includeGraded, shipTo);
       memCache.set(key.toString(), { body, exp: Date.now() + CACHE_TTL * 1000 });
       if (memCache.size > 500) memCache.delete(memCache.keys().next().value);
       const toCache = new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json", ...cacheHeaders } });

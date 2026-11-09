@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { TopBar } from '../components/TopBar';
+import { useRates } from '../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
 import { Link } from '../lib/router';
-import { useCollection, useCollectionThumbs } from '../lib/store';
+import { useCollection, useCollectionThumbs, useSettings } from '../lib/store';
 import { Badges } from './collection/Badges';
 import { BestCard } from './collection/BestCard';
 import { CardGrid } from './collection/CardGrid';
-import { uiName } from './collection/itemName';
+import { itemNames } from './collection/itemName';
 import {
   bestItem,
   cardCount,
@@ -62,10 +63,13 @@ export default function CollectionScreen() {
   const lang = useUiLang();
   const items = useCollection();
   const thumbs = useCollectionThumbs();
+  // Tiers and price badges follow the money shown (a $4 card is a 💎 용돈 카드 as 5,440원, not as $4.00).
+  const { currency } = useSettings();
+  const rates = useRates();
   const [sort, setSort] = useState<SortKey>('price');
   const [editingWanted, setEditing] = useState(false);
   const editing = editingWanted && items.length > 0;
-  const sorted = useMemo(() => sortItems(items, sort, (i) => uiName(i, lang) ?? i.name, lang), [items, sort, lang]);
+  const sorted = useMemo(() => sortItems(items, sort, (i) => itemNames(i, lang).title, lang), [items, sort, lang]);
   const best = bestItem(items);
 
   const editButton = items.length > 0 && (
@@ -99,8 +103,8 @@ export default function CollectionScreen() {
           <>
             <SummaryCard items={items} />
             {best && items.length > 1 && <BestCard item={best} photo={thumbs[best.key]} />}
-            <TierBar counts={tierCounts(items)} unpriced={unpricedCount(items)} />
-            <Badges list={milestones(items)} />
+            <TierBar counts={tierCounts(items, currency, rates)} unpriced={unpricedCount(items)} />
+            <Badges list={milestones(items, currency, rates)} />
 
             <section className="stack-12" aria-labelledby="collection-all">
               <div className="row-between wrap">

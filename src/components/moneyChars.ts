@@ -24,8 +24,8 @@ export function moneyChars(text: string, approx = false): number {
 
 /**
  * formatMoney split into the "approximately" sign and the amount, so Money can draw the sign smaller:
- * { prefix: "약 ", amount: "4,760원" } (Korean UI, won), { prefix: "≈ ", amount: "$3.50" }, else prefix "".
- * `text` is the whole string ("약 4,760원").
+ * { prefix: "약 ", amount: "4,760원" } or { prefix: "약 ", amount: "$3.50" } (Korean UI, any money),
+ * { prefix: "≈ ", amount: "$3.50" } (English UI), else prefix "". `text` is the whole string ("약 4,760원").
  */
 export function moneyParts(
   usd: number | null | undefined,

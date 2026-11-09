@@ -2,8 +2,9 @@ import { useRef, useState, type FormEvent } from 'react';
 import { Icon } from '../../components/Icon';
 import { TopBar } from '../../components/TopBar';
 import { useStrings, type Strings } from '../../lib/i18n';
+import { useSettings } from '../../lib/store';
 import { findByCode } from '../../lib/tcgdex';
-import type { CardBrief, PrintedCode } from '../../lib/types';
+import type { CardBrief, Country, PrintedCode } from '../../lib/types';
 import { useOnline } from '../../lib/useOnline';
 
 type Key =
@@ -56,8 +57,8 @@ const STRINGS: Strings<Key> = {
     set: '세트',
     number: '번호',
     total: '전체',
-    optional: '세트(sv8a 같은 글자)는 없어도 돼요',
-    setExample: '예: sv8a',
+    optional: '세트({set} 같은 글자)는 없어도 돼요',
+    setExample: '예: {set}',
     needNumber: '번호를 먼저 써 주세요',
     needMore: '세트나 / 뒤의 숫자도 써 주세요',
     find: '이 번호로 찾기',
@@ -86,8 +87,8 @@ const STRINGS: Strings<Key> = {
     set: 'Set',
     number: 'Number',
     total: 'Total',
-    optional: 'The set (letters like sv8a) is optional',
-    setExample: 'e.g. sv8a',
+    optional: 'The set (letters like {set}) is optional',
+    setExample: 'e.g. {set}',
     needNumber: 'Type the number first',
     needMore: 'Add the set or the number after the /',
     find: 'Find this number',
@@ -104,6 +105,12 @@ const STRINGS: Strings<Key> = {
  * (slow internet) and the scan stopped waiting; it keeps loading for the next scan.
  */
 export type ManualReason = 'unread' | 'notFound' | 'notHere' | 'ocrUnavailable' | 'ocrSlow';
+
+/**
+ * The set code printed on the cards kids in that country hold: Korean/Japanese cards print "sv8a", English ones
+ * the set's abbreviation, like "MEW" (Pokémon 151) next to "EN 199/165".
+ */
+const SET_EXAMPLE: Record<Country, string> = { KR: 'sv8a', US: 'MEW' };
 
 /** "sv8a 084/187" from whatever was read; '' when nothing was. */
 function codeText({ setCode, number, total }: PrintedCode): string {
@@ -129,6 +136,7 @@ type Status = 'idle' | 'finding' | 'noMatch' | 'failed' | 'needNumber' | 'needMo
 export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onByName }: ManualEntryProps) {
   const t = useStrings(STRINGS);
   const online = useOnline();
+  const example = { set: SET_EXAMPLE[useSettings().country] };
   const [setCode, setSetCode] = useState(code.setCode ?? '');
   const [number, setNumber] = useState(code.number ?? '');
   const [total, setTotal] = useState(code.total ?? '');
@@ -214,7 +222,7 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
                 className="input"
                 value={setCode}
                 onChange={(e) => edit(setSetCode)(e.target.value)}
-                placeholder={t('setExample')}
+                placeholder={t('setExample', example)}
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="off"
@@ -252,7 +260,7 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
               />
             </label>
           </div>
-          <p className="caption muted">{clean(number) && !ready && !tip ? t('needMore') : t('optional')}</p>
+          <p className="caption muted">{clean(number) && !ready && !tip ? t('needMore') : t('optional', example)}</p>
           {(message || tip) && (
             <p className={tip ? 'small scan-form-msg scan-form-tip' : 'small scan-form-msg'} role="alert">
               {message ?? tip}
