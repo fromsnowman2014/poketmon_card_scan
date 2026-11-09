@@ -9,7 +9,7 @@ import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
 import { formatMoney } from '../../lib/pricing';
 import { useSettings } from '../../lib/store';
 import type { EbayListing, EbaySummary } from '../../lib/types';
-import { auctionHeading, bidsText, shippingNote, timeLeft } from './format';
+import { auctionHeading, bidsText, shippingNote, timeLeft, withShipping } from './format';
 
 type Key =
   | 'title'
@@ -70,22 +70,34 @@ function useEbaySummary(workerUrl: string, query: string): EbaySummary | null | 
   return summary;
 }
 
-/** Listing prices are usually USD (eBay US); other currencies are shown as listed. */
-function ListingPrice({ item }: { item: EbayListing }) {
-  if (item.currency === 'USD') return <Money usd={item.price} />;
-  return (
-    <span className="tabular">
-      {new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currency }).format(item.price)}
-    </span>
-  );
-}
-
-/** Shipping note in the display currency. */
+/** Shipping note in the display currency ("배송비 1,700원 포함" in the Korean UI with won). */
 function useShippingNote(shipping: number | null | undefined): string {
   const { currency } = useSettings();
   const rates = useRates();
   const lang = useUiLang();
-  return shippingNote(shipping, lang, (usd) => formatMoney(usd, currency, rates));
+  return shippingNote(shipping, lang, (usd) => formatMoney(usd, currency, rates, { lang }));
+}
+
+/**
+ * An auction's price so far. USD listings (eBay US) show bid + shipping with the same note as the Buy It Now
+ * totals above ("배송비 … 포함", "무료 배송", or "배송비 별도" when eBay doesn't say), so a kid can compare them.
+ * Other currencies are shown as listed.
+ */
+function AuctionPrice({ item }: { item: EbayListing }) {
+  const note = useShippingNote(item.shipping);
+  if (item.currency !== 'USD') {
+    return (
+      <span className="tabular">
+        {new Intl.NumberFormat('en-US', { style: 'currency', currency: item.currency }).format(item.price)}
+      </span>
+    );
+  }
+  return (
+    <>
+      <Money usd={withShipping(item.price, item.shipping)} />
+      <span className="caption muted card-auction-ship">{note}</span>
+    </>
+  );
 }
 
 function LiveSummary({ summary }: { summary: EbaySummary }) {
@@ -143,7 +155,7 @@ function LiveSummary({ summary }: { summary: EbaySummary }) {
                   </span>
                   <span className="card-auction-price">
                     <span className="caption muted">{t(item.bidCount === 0 ? 'startBid' : 'currentBid')}</span>
-                    <ListingPrice item={item} />
+                    <AuctionPrice item={item} />
                   </span>
                 </ExternalLink>
               </li>
@@ -181,6 +193,9 @@ function LiveSkeleton() {
   );
 }
 
+/** The panel's element id (PriceHero's "eBay 가격은 아래에 있어요" button scrolls to it). */
+export const EBAY_PANEL_ID = 'card-ebay';
+
 export interface EbayPanelProps {
   /** eBay search words for the card (lib/ebay `ebayQuery`). */
   query: string;
@@ -203,8 +218,8 @@ export function EbayPanel({ query }: EbayPanelProps) {
   ];
 
   return (
-    <section className="surface card-ebay stack-16" aria-labelledby="card-ebay-title">
-      <h2 id="card-ebay-title" className="h2">
+    <section id={EBAY_PANEL_ID} className="surface card-ebay stack-16" aria-labelledby="card-ebay-title">
+      <h2 id="card-ebay-title" className="h2" tabIndex={-1}>
         {t('title')}
       </h2>
       {ebayWorkerUrl && summary === undefined && <LiveSkeleton />}

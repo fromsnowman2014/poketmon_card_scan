@@ -79,7 +79,7 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
       });
       expect(card.rarity).toBeUndefined(); // literal "None"
       const reverse = card.variants.find((v) => v.key === 'reverse');
-      expect(reverse?.summary?.market).toBe(1.68); // 1.51 EUR at the mocked 0.9 EUR/USD
+      expect(reverse?.summary?.market).toBeCloseTo(1.51 / 0.9, 9); // 1.51 EUR at the mocked 0.9 EUR/USD (exact, rounded when shown)
     });
 
     it('reads Korean cards from the JA endpoint', async () => {
@@ -104,8 +104,8 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
         defaultVariant: 'holo',
       });
       // High: Cardmarket avg 336.32 EUR beats TCGplayer's mid (the 10000 high is a placeholder).
-      const high = Math.round((336.32 / getRatesSync().EUR) * 100) / 100;
-      expect(card.variants[0].summary).toMatchObject({ market: 295.26, high, source: 'tcgplayer' });
+      expect(card.variants[0].summary).toMatchObject({ market: 295.26, source: 'tcgplayer' });
+      expect(card.variants[0].summary?.high).toBeCloseTo(336.32 / getRatesSync().EUR, 9);
     });
 
     it.each([
@@ -138,7 +138,7 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
       vi.stubGlobal('fetch', fetchFn);
       const rates = getRatesSync();
       const card = await getCard('ja', 'SV8a-084');
-      expect(card.variants.find((v) => v.key === 'reverse')?.summary?.market).toBe(Math.round((1.51 / rates.EUR) * 100) / 100);
+      expect(card.variants.find((v) => v.key === 'reverse')?.summary?.market).toBeCloseTo(1.51 / rates.EUR, 9);
       expect(calledUrls(fetchFn).some((u) => u.includes('er-api'))).toBe(true);
       // Each provider gets at most 3.5 s, then the next one is tried.
       await vi.advanceTimersByTimeAsync(3500);

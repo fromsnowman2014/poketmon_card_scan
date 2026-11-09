@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { cardImage } from '../lib/tcgdex';
 import type { ValueTier } from '../lib/types';
-import { nextAfterError, startState, type ImageState } from './cardImageChain';
+import { nextAfterError, noteLoaded, startState, type ImageState } from './cardImageChain';
 import { cx } from './cx';
 import './CardImage.css';
 
@@ -55,11 +55,11 @@ export function CardImage({ image, fallback, photo, alt, size = 'full', tier, ea
   const tcgdexSrc = cardImage(image, size === 'thumb' ? 'low' : 'high');
   const sources = [tcgdexSrc, fallback, photo].filter((s): s is string => !!s);
   const chain = sources.join('\n');
-  const [state, setState] = useState<ImageState>(() => startState(chain));
+  const [state, setState] = useState<ImageState>(() => startState(chain, tcgdexSrc));
   // New sources (another card or variant): start over from the best one.
-  if (state.chain !== chain) setState(startState(chain));
+  if (state.chain !== chain) setState(startState(chain, tcgdexSrc));
 
-  const current = state.chain === chain ? state : startState(chain);
+  const current = state.chain === chain ? state : startState(chain, tcgdexSrc);
   const src = sources[current.index];
   const cors = src !== undefined && src === tcgdexSrc && current.cors;
   const loading = !!src && !current.loaded;
@@ -81,14 +81,18 @@ export function CardImage({ image, fallback, photo, alt, size = 'full', tier, ea
         <img
           key={`${src}|${cors ? 'cors' : 'plain'}`}
           src={src}
-          // TCGdex sends CORS headers: a CORS response can be cached by the service worker for offline use
-          // (opaque ones are not). The TCGplayer fallback has no CORS headers, so it loads as a plain image.
+          // TCGdex sends CORS headers: a CORS response can be cached by the service worker for offline use.
+          // The TCGplayer fallback has none, so it loads as a plain image, and so do Japanese TCGdex images once
+          // one of them needed the plain retry this session (their CORS header is broken, see cardImageChain).
           crossOrigin={cors ? 'anonymous' : undefined}
           alt={alt}
           loading={eager ? 'eager' : 'lazy'}
           decoding="async"
           draggable={false}
-          onLoad={() => setState((s) => ({ ...s, loaded: true }))}
+          onLoad={() => {
+            noteLoaded(current, src);
+            setState((s) => (s.loaded ? s : { ...s, loaded: true }));
+          }}
           onError={() => setState((s) => nextAfterError(s, s.index === 0 && tcgdexSrc !== undefined))}
         />
       )}

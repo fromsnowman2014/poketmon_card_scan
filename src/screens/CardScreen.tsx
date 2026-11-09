@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { CardImage } from '../components/CardImage';
 import { Confetti } from '../components/Confetti';
 import { cx } from '../components/cx';
@@ -16,10 +16,10 @@ import { splitCardId } from '../lib/tcgdex';
 import type { CardDetail, CardLang, ValueTier } from '../lib/types';
 import { CardSkeleton } from './card/CardSkeleton';
 import { CollectButton } from './card/CollectButton';
-import { EbayPanel } from './card/EbayPanel';
+import { EBAY_PANEL_ID, EbayPanel } from './card/EbayPanel';
 import { cardNames, printedNumberOf, rarityLabel, speciesIds, variantLabel } from './card/format';
 import { MorePrices } from './card/MorePrices';
-import { PriceHero } from './card/PriceHero';
+import { FOLD_ATTR, PriceHero } from './card/PriceHero';
 import { useCardDetail } from './card/useCardDetail';
 import { VariantPicker } from './card/VariantPicker';
 import './CardScreen.css';
@@ -105,6 +105,36 @@ function useSyncSavedPrices(card: CardDetail): void {
   }, [card, items]);
 }
 
+/**
+ * Keeps the price readable on the first view. Measures everything from the page top to the end of the low–high
+ * row except the card art (a two-line name, wrapped chips and a trend pill all take room) and hands it to CSS as
+ * --card-fold-h, which sizes the art so that row ends above the tab bar and the raised Scan button (.card-art).
+ * Re-measured whenever the body resizes (fonts loading, another variant, rotation). The art's height doesn't
+ * change the number, so this settles at once.
+ */
+function useFitArt(ref: RefObject<HTMLElement>): void {
+  useLayoutEffect(() => {
+    const body = ref.current;
+    if (!body || typeof ResizeObserver === 'undefined') return;
+    let last = '';
+    const measure = () => {
+      const art = body.querySelector<HTMLElement>('.card-art');
+      const ends = [...body.querySelectorAll(`[${FOLD_ATTR}]`)];
+      if (!art || !ends.length) return;
+      const bottom = Math.max(...ends.map((el) => el.getBoundingClientRect().bottom)) + window.scrollY;
+      // offsetHeight: the layout size, not the pop-in animation's scaled one.
+      const value = `${Math.ceil(bottom - art.offsetHeight)}px`;
+      if (value === last) return;
+      last = value;
+      body.style.setProperty('--card-fold-h', value);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [ref]);
+}
+
 interface CardResultProps {
   card: CardDetail;
   /** Route language: 'ko' for Korean cards even though their data is Japanese. */
@@ -123,6 +153,8 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
   const card = useMemo(() => applyRates(fetched, rates), [fetched, rates]);
   const [variantKey, setVariantKey] = useState(card.defaultVariant);
   const [zoomed, setZoomed] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useFitArt(bodyRef);
   // Decided once on arrival: switching variants later shouldn't throw confetti again.
   const [celebrate] = useState(() => {
     const market = priceOf(card, card.defaultVariant);
@@ -160,7 +192,7 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
   );
 
   return (
-    <div className="screen-pad card-body">
+    <div ref={bodyRef} className="screen-pad card-body">
       <div className={cx('card-hero', tier && `tier-${tier}`)}>
         <button type="button" className="card-art pop-in" onClick={() => setZoomed(true)} aria-label={t('zoom')}>
           {picture}
@@ -185,7 +217,7 @@ function CardResult({ card: fetched, lang, photo, fromScan }: CardResultProps) {
         </div>
       </div>
 
-      <PriceHero summary={variant.summary} tier={tier} variantName={variantName} />
+      <PriceHero summary={variant.summary} tier={tier} variantName={variantName} ebayTarget={EBAY_PANEL_ID} />
 
       {several && <VariantPicker variants={card.variants} selected={variant.key} onSelect={setVariantKey} />}
 

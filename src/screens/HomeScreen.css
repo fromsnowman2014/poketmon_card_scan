@@ -275,10 +275,13 @@
 }
 
 .home-recent-item {
+  /* Size container: a long price shrinks to the 112px tile (see .home-recent-price .money). */
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 112px;
+  min-width: 0;
   border-radius: var(--radius-sm);
 }
 
@@ -302,9 +305,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   margin-top: -4px;
   font-size: var(--fs-small);
   font-weight: 800;
+}
+
+/* 15px, smaller for a long amount ("≈ ₩13,612,700") so it stays inside the tile next to the 10px tier dot + 6px
+   gap (Money sets --money-chars); an ellipsis is the last resort. */
+.home-recent-price .money {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: clamp(11px, (100cqi - 16px) / (var(--money-chars, 8) * 0.64), var(--fs-small));
 }
 
 /* ---------- How it works ---------- */

@@ -91,6 +91,19 @@ export function rangePosition(low: number, high: number, market: number): number
   return Math.min(1, Math.max(0, (market - low) / (high - low)));
 }
 
+/** A 시세 marker this close to an end of the bar (share of the bar) sits "at" that end. */
+const RANGE_END = 0.02;
+
+/**
+ * Where to draw the 시세 marker on the low–high bar (0..1), or null when a bar would say nothing: no spread
+ * (low = high), or 시세 at one end (it equals the low or the high). Then only the two numbers are shown.
+ */
+export function rangeMarker(low: number, high: number, market: number): number | null {
+  if (![low, high, market].every(Number.isFinite) || !(high > low)) return null;
+  const pos = rangePosition(low, high, market);
+  return pos <= RANGE_END || pos >= 1 - RANGE_END ? null : pos;
+}
+
 export type Trend = 'up' | 'down';
 
 /**
@@ -173,6 +186,15 @@ export function shippingNote(shipping: number | null | undefined, lang: UiLang, 
   if (shipping === 0) return s.free;
   if (typeof shipping === 'number' && Number.isFinite(shipping) && shipping > 0) return s.incl.replace('{amount}', money(shipping));
   return s.extra;
+}
+
+/**
+ * What an auction costs so far, like the Buy It Now totals next to it: the bid plus shipping when eBay says
+ * what shipping costs (pair it with shippingNote, which then reads "배송비 … 포함" / "무료 배송"); the bid alone,
+ * with "배송비 별도", when it doesn't.
+ */
+export function withShipping(price: number, shipping: number | null | undefined): number {
+  return typeof shipping === 'number' && Number.isFinite(shipping) && shipping > 0 ? price + shipping : price;
 }
 
 type NameCard = Pick<CardDetail, 'name' | 'dexIds' | 'hp'>;

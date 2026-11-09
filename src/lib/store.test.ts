@@ -225,6 +225,12 @@ describe('collection', () => {
     store.setQuantity(key, 3);
     expect(store.collectionTotalUsd(saved())).toBe(0.3);
   });
+
+  it('collectionTotalUsd keeps fractions of a cent (rounded only when shown)', () => {
+    const key = store.addToCollection(card('SV8a-003', [variant('normal', 0.0447)]), 'normal');
+    store.setQuantity(key, 3);
+    expect(store.collectionTotalUsd(saved())).toBe(0.1341);
+  });
 });
 
 describe('photos', () => {

@@ -1,5 +1,6 @@
 .card-image {
   position: relative;
+  container-type: inline-size; /* for the set code on the card back (.card-image-code) */
   width: 100%;
   aspect-ratio: 63 / 88;
   /* Real cards have ~3mm corners on 63×88mm. */
@@ -75,6 +76,7 @@
 
 .card-image-code b {
   font-size: 15px;
+  font-size: clamp(11px, 12.5cqi, 15px); /* a small card (Card screen art on an SE) still fits "200/SV-P" */
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }

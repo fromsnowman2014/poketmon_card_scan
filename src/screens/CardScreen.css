@@ -29,19 +29,22 @@
 }
 
 /*
- * The art is sized by the viewport height so that the name, chips and the big price (with its second currency)
- * always fit above the tab bar and its raised Scan button on the first view — even on an iPhone SE (375×667).
- * --card-art-reserve is everything else from the top bar to the bottom of the low–high row (378px), plus the tab
- * bar and the part of the Scan button that sticks up (its lift + 5px ring). On an SE that leaves a 126px-wide card
- * and keeps the whole price panel clear of the Scan button; taller phones hit the 46% cap instead.
+ * The art is sized by the viewport height so that the name, chips, the big price (with its second currency) and
+ * the low–high row always fit above the tab bar and its raised Scan button on the first view — even on an iPhone
+ * SE (375×667) with a two-line name, wrapped chips or a trend pill.
+ * --card-fold-h is everything from the page top to the bottom of the low–high row except the art itself.
+ * CardScreen measures it (useFitArt), since names and chips wrap differently per card and language; before that,
+ * or without ResizeObserver, it assumes one-line name and chips (safe top + 378px). Below the fold line come the
+ * tab bar and the part of the Scan button that sticks up (its lift + 5px ring), and 3px of air.
+ * On an SE that leaves a ~126px-wide card for a plain card; taller phones hit the 46% cap instead.
  */
 .card-art {
-  --card-art-reserve: calc(378px + var(--tabbar-h) + var(--tabbar-lift) + 5px);
+  --card-art-below: calc(var(--card-fold-h, calc(var(--safe-top) + 378px)) + var(--tabbar-h) + var(--tabbar-lift) + 5px + 3px);
   position: relative;
   z-index: 1;
   display: block;
-  width: clamp(104px, calc((100vh - var(--safe-top) - var(--safe-bottom) - var(--card-art-reserve)) * 63 / 88), min(46%, 220px));
-  width: clamp(104px, calc((100svh - var(--safe-top) - var(--safe-bottom) - var(--card-art-reserve)) * 63 / 88), min(46%, 220px));
+  width: clamp(92px, calc((100vh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
+  width: clamp(92px, calc((100svh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
   padding: 0;
   border: 0;
   border-radius: 4.8% / 3.4%;
@@ -101,10 +104,24 @@ button.card-art:active {
   line-height: 1.3;
 }
 
-/* Short phones (iPhone SE): a slightly smaller name keeps the price above the tab bar. */
+/* Short phones (iPhone SE): a slightly smaller name and tighter spacing keep the price and the low–high row
+   above the tab bar without shrinking the card art much. */
 @media (max-height: 720px) {
+  .card-body {
+    gap: 10px;
+  }
+
   .card-name {
     font-size: 24px;
+  }
+
+  .card-price {
+    gap: 8px;
+    padding: 14px 14px 12px;
+  }
+
+  .card-price-tiered {
+    padding-top: 28px;
   }
 }
 
@@ -197,6 +214,15 @@ button.card-art:active {
   gap: 2px;
 }
 
+/* "시세 · 기본" with the trend pill beside it (it wraps under the label only when both can't share the row). */
+.card-price-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+}
+
 .card-price-label {
   color: var(--text-muted);
   font-size: var(--fs-small);
@@ -219,14 +245,18 @@ button.card-art:active {
   font-size: clamp(30px, 100cqi / (var(--money-chars, 8) * 0.64), var(--fs-price-xl));
 }
 
-/* A small, calm note under the price: only the arrow and number carry the up/down color. */
+/* Room under the big figures so a comma ("398,500원") doesn't touch the second-currency line. */
+.card-price-value.money-stack {
+  gap: 5px;
+}
+
+/* A small, calm note beside "시세": only the arrow and number carry the up/down color. */
 .card-trend {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 26px;
-  margin-top: -4px;
-  padding: 3px 11px;
+  min-height: 24px;
+  padding: 2px 10px;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
   color: var(--text-muted);
@@ -246,15 +276,16 @@ button.card-art:active {
   color: var(--down);
 }
 
-/* Low – [static bar] – high, labels above the ends. Not a slider: thin bar, small flat dot, nothing to grab. */
+/* Low – [static bar] – high, labels above the ends. Not a slider: a thin bar with a small "시세" tag on it, nothing
+   to grab. Without a bar (시세 at one end), a plain "~" joins the two numbers. */
 .card-range {
   display: grid;
   grid-template-columns: auto minmax(24px, 1fr) auto;
   grid-template-areas:
-    "label-low . label-high"
+    ". . ."
     "low track high";
   align-items: center;
-  gap: 2px 12px;
+  gap: 2px 10px;
   width: 100%;
   text-align: left;
 }
@@ -265,8 +296,10 @@ button.card-art:active {
     "low track high";
 }
 
-.card-range-label-low { grid-area: label-low; }
-.card-range-label-high { grid-area: label-high; text-align: right; }
+/* Each label may reach over the bar's column, so a long label ("Lowest for sale now") doesn't widen the number's
+   column and push the bar away from the number under it (items spanning the 1fr column don't size the others). */
+.card-range-label-low { grid-row: 1; grid-column: 1 / 3; justify-self: start; }
+.card-range-label-high { grid-row: 1; grid-column: 2 / 4; justify-self: end; text-align: right; }
 .card-range-label { grid-area: label; text-align: center; }
 .card-range-low { grid-area: low; }
 .card-range-high { grid-area: high; text-align: right; }
@@ -281,20 +314,43 @@ button.card-art:active {
 .card-range-track {
   grid-area: track;
   position: relative;
+  container-type: inline-size; /* the tag turns into a plain dot when long amounts leave little bar */
   height: 6px;
   border-radius: var(--radius-pill);
   background: linear-gradient(90deg, var(--surface-3), var(--tier, var(--primary)));
 }
 
+/* The tag sits at --pos (0..1) and is shifted by the same share of its own width, so it never pokes out of the bar. */
 .card-range-dot {
   position: absolute;
   top: 50%;
-  width: 12px;
-  height: 12px;
-  margin: -6px 0 0 -6px;
-  border-radius: 50%;
+  left: calc(var(--pos, 0.5) * 100%);
+  transform: translate(calc(var(--pos, 0.5) * -100%), -50%);
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
   background: var(--text);
   box-shadow: 0 0 0 2px var(--surface);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+@container (max-width: 76px) {
+  .card-range-dot {
+    width: 12px;
+    height: 12px;
+    padding: 0;
+    font-size: 0;
+  }
+}
+
+.card-range-to {
+  grid-area: track;
+  color: var(--text-muted);
+  font-weight: 700;
+  text-align: center;
 }
 
 .card-range-single {
@@ -307,6 +363,26 @@ button.card-art:active {
 
 .card-price-source {
   text-wrap: balance;
+}
+
+/* "eBay 가격은 아래에 있어요 ↓": a 44px tap target that looks like one small line (negative margins). */
+.card-ebay-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tap);
+  margin: -14px 0 -10px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--primary-text);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+}
+
+.card-ebay-jump:active {
+  background: var(--primary-soft);
 }
 
 .card-price-empty {
@@ -375,6 +451,12 @@ button.card-art:active {
 .card-ebay {
   padding: 18px;
   border-radius: var(--radius-lg);
+  /* PriceHero's "eBay prices are below" scrolls here: stop under the sticky top bar. */
+  scroll-margin-top: calc(var(--safe-top) + var(--topbar-h) + 12px);
+}
+
+.card-ebay h2:focus {
+  outline: none;
 }
 
 .card-ebay-stats {
@@ -386,10 +468,19 @@ button.card-art:active {
   background: var(--surface-2);
 }
 
-.card-ebay-big {
-  font-size: 24px;
+/* Each column is a size container: a big amount ("₩1,975,400", "1억 2,000만 원") shrinks to its column
+   (Money sets --money-chars), like the Card price, instead of running into the next one. */
+.card-ebay-stats > div {
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.card-ebay-stats .card-ebay-big {
+  font-size: clamp(15px, 5vw, 24px);
+  font-size: clamp(15px, 100cqi / (var(--money-chars, 8) * 0.64), 24px);
   font-weight: 800;
   line-height: 1.15;
+  white-space: normal; /* last resort: wrap at a space ("1억 2,000만 / 원") rather than overflow */
 }
 
 .card-ebay-sub {
@@ -409,9 +500,11 @@ button.card-art:active {
   display: flex;
   align-items: center;
   gap: 12px;
+  width: calc(100% + 16px); /* a <button> (ExternalLink) doesn't stretch like a link */
   min-height: 60px;
   margin: 0 -8px;
   padding: 6px 8px;
+  text-align: left;
   border-radius: var(--radius-sm);
   transition: background-color var(--dur) var(--ease);
 }
@@ -440,7 +533,15 @@ button.card-art:active {
   align-items: flex-end;
   gap: 2px;
   flex: none;
+  max-width: 46%;
   font-weight: 800;
+  text-align: right;
+}
+
+/* "배송비 1,700원 포함" under the bid + shipping total (wraps under it in a narrow row). */
+.card-auction-ship {
+  font-weight: 600;
+  line-height: 1.25;
 }
 
 .card-ebay-links {

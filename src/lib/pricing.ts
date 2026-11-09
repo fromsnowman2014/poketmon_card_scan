@@ -1,5 +1,5 @@
 // Price normalization (TCGdex → CardVariant/PriceSummary in USD), kid value tiers, money formatting.
-import type { CardVariant, CardmarketPrice, DisplayCurrency, PriceSummary, TcgplayerPrice, ValueTier } from './types';
+import type { CardVariant, CardmarketPrice, DisplayCurrency, PriceSummary, TcgplayerPrice, UiLang, ValueTier } from './types';
 import { eurToUsd, getRatesSync, type Rates } from './fx';
 
 type Obj = Record<string, unknown>;
@@ -19,7 +19,6 @@ const asObj = (x: unknown): Obj => (typeof x === 'object' && x !== null && !Arra
 const asStr = (x: unknown): string | undefined => (typeof x === 'string' && x ? x : undefined);
 /** Positive finite number, else null. Sources use 0 as "no data". */
 const price = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : null);
-const cents = (n: number | null): number | null => (n === null ? null : Math.round(n * 100) / 100);
 const allNull = (o: object) => Object.values(o).every((v) => v === null);
 
 function toRawVariant(x: unknown): RawVariant {
@@ -174,21 +173,28 @@ const minOf = (xs: (number | null)[]) => {
   return ns.length ? Math.min(...ns) : null;
 };
 
+/**
+ * A "highest price" above this many times the market price is a stray listing (a lone $95 Direct copy of a $2 promo,
+ * a 999 placeholder, a Cardmarket spike), not what the card sells for.
+ */
+const HIGH_MAX_RATIO = 3;
+
 function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketPrice | null | undefined, rates: Rates): PriceSummary {
   const toUsd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
-  // TCGplayer's highPrice is the highest listing and often a 999/10000 placeholder. Without a sane one, the
-  // highest real number we have: mid, cheapest Direct listing or what the card sells for on Cardmarket.
-  const high =
-    tcg.high !== null && tcg.high <= 3 * market
-      ? tcg.high
-      : maxOf([tcg.mid, market, tcg.directLow, toUsd(cm ? maxOf([cm.avg, cm.avg30, cm.trend]) : null)]);
+  const sane = (usd: number | null) => (usd !== null && usd <= HIGH_MAX_RATIO * market ? usd : null);
+  // TCGplayer's highPrice is the highest listing and often a 999/10000 placeholder. Without a sane one, the highest
+  // sane number we have: mid, the cheapest Direct listing or what the card sells for on Cardmarket — each one checked
+  // on its own (a spiky Cardmarket avg doesn't hide a sane trend), and the market price when none passes.
+  const fallback = [tcg.mid, tcg.directLow, ...(cm ? [cm.avg, cm.avg30, cm.trend].map(toUsd) : [])];
+  const high = sane(tcg.high) ?? maxOf(fallback.map(sane));
   // The trend comes from Cardmarket (another market): only when its price is in the same ballpark.
   const cmMarket = cm ? toUsd(cardmarketMarket(cm)) : null;
   const comparable = cmMarket !== null && cmMarket >= market / 2 && cmMarket <= market * 2;
+  // Not rounded: amounts are rounded once, when shown (formatMoney), so a converted price isn't rounded twice.
   return {
-    market: cents(market),
-    low: cents(tcg.low === null ? null : Math.min(tcg.low, market)),
-    high: cents(Math.max(high ?? market, market)),
+    market,
+    low: tcg.low === null ? null : Math.min(tcg.low, market),
+    high: Math.max(high ?? market, market),
     changePct: comparable ? changePct(cm, market) : null,
     source: 'tcgplayer',
     converted: false,
@@ -198,7 +204,8 @@ function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketP
 function summarizeCardmarket(cm: CardmarketPrice, market: number, rates: Rates): PriceSummary {
   // Cardmarket's raw "low" is often a 0.02 junk listing; use the usual range of recent averages instead.
   const usual = [cm.avg1, cm.avg7, cm.avg30, cm.trend, market];
-  const usd = (eur: number | null) => cents(eur === null ? null : eurToUsd(eur, rates));
+  // Exact USD, not whole cents: €0.04 is $0.0447 → 60원, where $0.04 would show 50원. formatMoney rounds for display.
+  const usd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
   return {
     market: usd(market),
     low: usd(minOf(usual)),
@@ -285,32 +292,59 @@ const TIERS: [number, ValueTier][] = [
   [1, 'nice'],
 ];
 
-/** Kid-friendly value tier: common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100. */
+/**
+ * Kid-friendly value tier: common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100. Compares whole cents, like
+ * the dollar amount shown ($0.996 shows as "$1.00" and is "nice").
+ */
 export function valueTier(usd: number | null | undefined): ValueTier {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return 'common';
-  return TIERS.find(([min]) => usd >= min)?.[1] ?? 'common';
+  const shown = Math.round(usd * 100) / 100;
+  return TIERS.find(([min]) => shown >= min)?.[1] ?? 'common';
 }
 
 const USD_CENTS = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const USD_WHOLE = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const KRW = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'KRW', maximumFractionDigits: 0 });
 
-/** "$0.45", "$12.34", "$1,234", "₩16,500", "—" for missing; approx adds "≈ ". */
+const KO_NUM = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 });
+
+/**
+ * Korean-style won for kids: "4,760원", "123,400원"; from 1,000,000원 compact "198만 원",
+ * "1억 2,000만 원". `krw` is already rounded to the display step.
+ */
+function koWon(krw: number): string {
+  const sign = krw < 0 ? '-' : '';
+  const a = Math.abs(krw);
+  if (a < 1_000_000) return `${sign}${KO_NUM.format(a)}원`;
+  const man = Math.round(a / 10_000); // 만 = 10,000
+  const eok = Math.floor(man / 10_000); // 억 = 100,000,000
+  const rest = man % 10_000;
+  if (eok === 0) return `${sign}${KO_NUM.format(man)}만 원`;
+  return rest === 0 ? `${sign}${KO_NUM.format(eok)}억 원` : `${sign}${KO_NUM.format(eok)}억 ${KO_NUM.format(rest)}만 원`;
+}
+
+/**
+ * "$0.45", "$12.34", "$1,234", "₩16,500", "—" for missing; approx adds "≈ ".
+ * With `lang: 'ko'` and KRW, uses Korean style instead: "16,500원", "198만 원", approx "약 16,500원".
+ */
 export function formatMoney(
   usd: number | null | undefined,
   currency: DisplayCurrency,
   rates: Rates = getRatesSync(),
-  opts: { approx?: boolean } = {},
+  opts: { approx?: boolean; lang?: UiLang } = {},
 ): string {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return '—';
   let text: string;
+  const ko = currency === 'KRW' && opts.lang === 'ko';
   if (currency === 'KRW') {
     const krw = usd * rates.KRW;
     const step = Math.abs(krw) < 10000 ? 10 : 100;
-    text = KRW.format(Math.round(krw / step) * step);
+    const rounded = Math.round(krw / step) * step;
+    text = ko ? koWon(rounded) : KRW.format(rounded);
   } else {
     const rounded = Math.round(usd * 100) / 100;
     text = Math.abs(rounded) >= 1000 ? USD_WHOLE.format(rounded) : USD_CENTS.format(rounded);
   }
-  return opts.approx ? `≈ ${text}` : text;
+  if (!opts.approx) return text;
+  return ko ? `약 ${text}` : `≈ ${text}`;
 }

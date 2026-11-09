@@ -14,12 +14,18 @@
   align-items: center;
 }
 
+/* "≈ " or "약 " (the trailing space is the gap). Smaller than the amount, but never below 12px (or the amount). */
 .money-approx {
-  margin-right: 0.18em;
   font-size: 0.62em;
+  font-size: clamp(min(1em, 12px), 0.62em, 1em);
   font-weight: 700;
   color: var(--text-muted);
   vertical-align: 0.12em;
+}
+
+/* A word ("약") sits on the baseline; only the "≈" sign is lifted to the middle of the figures. */
+.money-approx-word {
+  vertical-align: baseline;
 }
 
 .money-sub {

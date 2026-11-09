@@ -12,6 +12,8 @@ type Key =
   | 'unreadTip'
   | 'ocrUnavailable'
   | 'ocrUnavailableText'
+  | 'ocrSlow'
+  | 'ocrSlowText'
   | 'notFound'
   | 'notHere'
   | 'offline'
@@ -41,6 +43,8 @@ const STRINGS: Strings<Key> = {
     unreadTip: '카드를 똑바로 세워서 네모에 꽉 차게 찍으면 더 잘 읽어요.',
     ocrUnavailable: '앗, 번호 읽기 도구를 못 불러왔어요',
     ocrUnavailableText: '인터넷이 잘 될 때 다시 찍어 봐요. 지금은 아래에 번호를 직접 써 주세요.',
+    ocrSlow: '번호 읽기 도구를 아직 받고 있어요',
+    ocrSlowText: '인터넷이 느려요. 조금 뒤에 다시 찍어 봐요. 지금은 아래에 번호를 직접 써 주세요.',
     notFound: '음… 카드를 못 찾았어요 🤔',
     notHere: '번호를 직접 써 볼까요?',
     offline: '인터넷이 없어요',
@@ -69,6 +73,8 @@ const STRINGS: Strings<Key> = {
     unreadTip: 'Tip: hold the card upright and make it fill the box.',
     ocrUnavailable: "Oops, the number reader didn't load",
     ocrUnavailableText: 'Try scanning again when the internet works. For now, type the number below.',
+    ocrSlow: 'The number reader is still loading',
+    ocrSlowText: 'The internet is slow. Try scanning again in a minute. For now, type the number below.',
     notFound: "Hmm, can't find that card 🤔",
     notHere: "Let's type the number",
     offline: 'No internet',
@@ -93,8 +99,11 @@ const STRINGS: Strings<Key> = {
   },
 };
 
-/** 'ocrUnavailable': the OCR engine could not load (offline first scan, CDN down). */
-export type ManualReason = 'unread' | 'notFound' | 'notHere' | 'ocrUnavailable';
+/**
+ * 'ocrUnavailable': the OCR engine could not load (offline first scan, CDN down). 'ocrSlow': it is still downloading
+ * (slow internet) and the scan stopped waiting; it keeps loading for the next scan.
+ */
+export type ManualReason = 'unread' | 'notFound' | 'notHere' | 'ocrUnavailable' | 'ocrSlow';
 
 /** "sv8a 084/187" from whatever was read; '' when nothing was. */
 function codeText({ setCode, number, total }: PrintedCode): string {
@@ -162,7 +171,13 @@ export function ManualEntry({ reason, code, photo, strip, onFound, onRetake, onB
   };
 
   const title = online ? t(reason) : t('offline');
-  const text = !online ? t('offlineText') : reason === 'ocrUnavailable' ? t('ocrUnavailableText') : t('text');
+  const text = !online
+    ? t('offlineText')
+    : reason === 'ocrUnavailable'
+      ? t('ocrUnavailableText')
+      : reason === 'ocrSlow'
+        ? t('ocrSlowText')
+        : t('text');
   const message =
     status === 'noMatch' ? t('noMatch') : status === 'failed' ? (online ? t('failed') : t('offlineText')) : null;
   const tip = status === 'needNumber' ? t('needNumber') : status === 'needMore' ? t('needMore') : null;

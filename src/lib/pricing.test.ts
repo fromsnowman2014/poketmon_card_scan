@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { FALLBACK_RATES, type Rates } from './fx';
 import { applyRates, buildVariants, formatMoney, summarize, valueTier } from './pricing';
-import type { CardmarketPrice, TcgplayerPrice } from './types';
+import type { CardmarketPrice, PriceSummary, TcgplayerPrice } from './types';
 import { fixtures } from './__fixtures__/mockFetch';
 
 const rates: Rates = FALLBACK_RATES; // EUR 0.8957 / KRW 1359 per USD
 
+/** Summaries keep exact USD (rounded only when shown); compare them in whole cents. */
+const r2 = (n: number | null) => (n === null ? null : Math.round(n * 100) / 100);
+const inCents = (s: PriceSummary | null | undefined) => s && { ...s, market: r2(s.market), low: r2(s.low), high: r2(s.high) };
+
 const byKey = (raw: unknown) => {
   const { variants, defaultVariant } = buildVariants(raw, rates);
-  return { map: new Map(variants.map((v) => [v.key, v])), keys: variants.map((v) => v.key), defaultVariant };
+  const centsVariants = variants.map((v) => ({ ...v, summary: inCents(v.summary) }));
+  return { map: new Map(centsVariants.map((v) => [v.key, v])), keys: variants.map((v) => v.key), defaultVariant };
 };
 
 describe('buildVariants — real TCGdex cards', () => {
@@ -181,7 +186,27 @@ describe('summarize', () => {
     expect(summarize({ ...tcg, high: 5.5 }, null, rates)?.high).toBe(5.5);
     expect(summarize(tcg, null, rates)?.high).toBe(2.5);
     expect(summarize({ ...tcg, directLow: 3 }, null, rates)?.high).toBe(3);
-    expect(summarize(tcg, { ...cm, avg: 3.5, trend: 2 }, rates)?.high).toBe(3.91); // 3.5 EUR
+    expect(summarize(tcg, { ...cm, avg: 3.5, trend: 2 }, rates)?.high).toBeCloseTo(3.5 / rates.EUR, 9); // 3.5 EUR
+  });
+
+  it('caps every fallback candidate at 3× market: a lone Direct listing or a Cardmarket spike is not the highest price', () => {
+    // smp-SM01: one $95.53 Direct copy of a $2.14 promo (raw high 114.64) → mid, not 45× the market price.
+    const sm01 = { low: 1.5, mid: 2.16, high: 114.64, market: 2.14, directLow: 95.53 };
+    expect(summarize(sm01, null, rates)?.high).toBe(2.16);
+    // With its Cardmarket prices (≈ €4.2–4.6): the highest one that passes (trend €4.56 = $5.09, under 3 × 2.14).
+    const sm01cm = { avg: 3.8, low: 0.5, trend: 4.56, avg1: 9, avg7: 4.47, avg30: 4.19 };
+    expect(summarize(sm01, sm01cm, rates)?.high).toBeCloseTo(4.56 / rates.EUR, 9);
+    // smp-SM60: directLow is the rejected raw high itself; Cardmarket is below market → the market price.
+    const sm60 = { low: 25, mid: 50, high: 518.14, market: 53.93, directLow: 518.14 };
+    const sm60cm = { avg: 22.75, low: 6.99, trend: 26.83, avg1: 14, avg7: 26.56, avg30: 22.68 };
+    expect(summarize(sm60, sm60cm, rates)?.high).toBe(53.93);
+    // smp-SM151: Cardmarket trend (€93.80 = $104.72) is above the cap, avg (€79.17 = $88.39) is not → it still counts.
+    const sm151 = { low: 20, mid: 36.07, high: 498.7, market: 32.05, directLow: 34.61 };
+    const sm151cm = { avg: 79.17, low: 30, trend: 93.8, avg1: 120, avg7: 99.4, avg30: 53.74 };
+    expect(summarize(sm151, sm151cm, rates)?.high).toBeCloseTo(79.17 / rates.EUR, 9);
+    // Exactly 3× still counts; just above does not.
+    expect(summarize({ ...sm01, mid: null, directLow: 6.42 }, null, rates)?.high).toBe(6.42);
+    expect(summarize({ ...sm01, mid: null, directLow: 6.43 }, null, rates)?.high).toBe(2.14);
   });
 
   it('clamps low ≤ market ≤ high', () => {
@@ -214,7 +239,14 @@ describe('summarize', () => {
 
   it('Cardmarket only: converts EUR and uses the usual range, ignoring the junk low', () => {
     const s = summarize(null, { avg: 4, low: 0.02, trend: 3, avg1: 5, avg7: 2.5, avg30: 2, }, rates, '2026-11-07');
-    expect(s).toEqual({ market: 3.35, low: 2.23, high: 5.58, changePct: 25, source: 'cardmarket', converted: true, updated: '2026-11-07' });
+    expect(inCents(s)).toEqual({ market: 3.35, low: 2.23, high: 5.58, changePct: 25, source: 'cardmarket', converted: true, updated: '2026-11-07' });
+  });
+
+  it('Cardmarket only: keeps exact USD so a penny card is not rounded twice (€0.04 → 60원, not 50원)', () => {
+    const s = summarize(null, { avg: null, low: null, trend: 0.04, avg1: null, avg7: null, avg30: null }, rates)!;
+    expect(s.market).toBeCloseTo(0.04 / rates.EUR, 12); // $0.0447, not $0.04
+    expect(formatMoney(s.market, 'KRW', rates, { lang: 'ko', approx: true })).toBe('약 60원');
+    expect(formatMoney(s.market, 'USD', rates, { approx: true })).toBe('≈ $0.04');
   });
 
   it('returns null without any usable number', () => {
@@ -229,9 +261,9 @@ describe('applyRates', () => {
     const card = { id: 'SV8a-084', variants, defaultVariant };
     const next = applyRates(card, { EUR: 0.9, KRW: 1400, fetchedAt: '' });
     const reverse = next.variants.find((v) => v.key === 'reverse')!;
-    expect(reverse.summary).toMatchObject({ market: 1.68, updated: '2026-11-07T23:49:17.885Z' }); // 1.51 EUR / 0.9
+    expect(inCents(reverse.summary)).toMatchObject({ market: 1.68, updated: '2026-11-07T23:49:17.885Z' }); // 1.51 EUR / 0.9
     expect(next.id).toBe('SV8a-084');
-    expect(card.variants.find((v) => v.key === 'reverse')!.summary?.market).toBe(1.69); // input untouched
+    expect(r2(card.variants.find((v) => v.key === 'reverse')!.summary!.market)).toBe(1.69); // input untouched
   });
 });
 
@@ -245,6 +277,8 @@ describe('valueTier', () => {
     [25, 'super'],
     [99.99, 'super'],
     [100, 'treasure'],
+    [0.996, 'nice'], // shown as $1.00
+    [4.994, 'nice'], // shown as $4.99
   ] as const)('%s → %s', (usd, tier) => expect(valueTier(usd)).toBe(tier));
 });
 
@@ -265,6 +299,27 @@ describe('formatMoney', () => {
   it('handles missing values and approx', () => {
     expect(formatMoney(null, 'USD')).toBe('—');
     expect(formatMoney(undefined, 'KRW')).toBe('—');
+    expect(formatMoney(NaN, 'KRW', rates, { lang: 'ko', approx: true })).toBe('—');
     expect(formatMoney(1.69, 'USD', rates, { approx: true })).toBe('≈ $1.69');
+  });
+
+  it('formats won Korean-style for the Korean UI', () => {
+    const r = { ...rates, KRW: 1000 };
+    expect(formatMoney(4.76, 'KRW', r, { lang: 'ko' })).toBe('4,760원');
+    expect(formatMoney(4.76, 'KRW', r, { lang: 'ko', approx: true })).toBe('약 4,760원');
+    expect(formatMoney(123.4, 'KRW', r, { lang: 'ko' })).toBe('123,400원');
+    expect(formatMoney(1975.4, 'KRW', r, { lang: 'ko' })).toBe('198만 원');
+    expect(formatMoney(120000, 'KRW', r, { lang: 'ko' })).toBe('1억 2,000만 원');
+    expect(formatMoney(100000, 'KRW', r, { lang: 'ko' })).toBe('1억 원');
+    expect(formatMoney(4.76, 'KRW', r, { lang: 'en', approx: true })).toBe('≈ ₩4,760');
+    expect(formatMoney(4.76, 'USD', r, { lang: 'ko', approx: true })).toBe('≈ $4.76');
+  });
+
+  it('rounds unrounded (converted) amounts only for display', () => {
+    const r = { ...rates, KRW: 1000 };
+    expect(formatMoney(0.0447, 'KRW', r, { lang: 'ko' })).toBe('40원'); // 44.7 → 40
+    expect(formatMoney(0.0456, 'KRW', r, { lang: 'ko' })).toBe('50원');
+    expect(formatMoney(0.0447, 'USD', r)).toBe('$0.04');
+    expect(formatMoney(1975.44, 'KRW', r, { lang: 'ko', approx: true })).toBe('약 198만 원');
   });
 });

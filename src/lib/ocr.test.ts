@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Canvas work is stubbed (Node has no canvas); the engine lifecycle and pass loop run for real.
+/** Source px width of the band cropRegion returns (the low-resolution pass list is picked from it). */
+const band = { width: 700 };
 vi.mock('./imageProc', () => {
   const px = (height = 40) => ({ data: new Uint8ClampedArray(0), width: 100, height });
   return {
@@ -11,7 +13,7 @@ vi.mock('./imageProc', () => {
     threshold: (p: unknown) => p,
     shear: (p: unknown) => p,
     pad: (p: { height: number }, q: number) => px(p.height + 2 * q),
-    cropRegion: () => ({}),
+    cropRegion: () => ({ width: band.width }),
     upscaleTo: () => ({}),
     readPixels: () => px(),
     pixelsToCanvas: () => ({}),
@@ -142,14 +144,79 @@ describe('readCodeStrip engine lifecycle', () => {
     expect(createWorker).toHaveBeenCalledTimes(2);
   });
 
-  it('treats a load step that makes no progress for 30 s as failed', async () => {
+  it('stops waiting after 30 s of silence but keeps loading, so a slow download serves the next scan', async () => {
+    const worker = fakeWorker();
+    let finish: (w: FakeWorker) => void = () => undefined;
+    workerFactory((opts) => {
+      opts.logger({ status: 'loading language traineddata', progress: 0 });
+      return new Promise<FakeWorker>((resolve) => {
+        finish = resolve; // the 3 MB language file: no progress until it has all arrived
+      });
+    });
+    const { readCodeStrip, ocrLoading } = await load(true);
+    const first = readCodeStrip(card);
+    await untilCreated();
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(ocrLoading()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect((await first).status).toBe('unavailable'); // the kid gets the number form now
+    expect(spawned[0].terminated).toBe(false);
+    expect(ocrLoading()).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    finish(worker); // arrived after 40 s
+    await vi.advanceTimersByTimeAsync(10);
+    expect(ocrLoading()).toBe(false);
+    const second = await readCodeStrip(card, { maxPasses: 1 });
+    expect(second.status).toBe('done');
+    expect(createWorker).toHaveBeenCalledTimes(1); // no second download
+  });
+
+  it('gives each waiting scan its own 30 s, counted from when it started waiting', async () => {
     workerFactory(() => never());
+    const { readCodeStrip, preloadOcr } = await load(true);
+    void preloadOcr();
+    await untilCreated();
+    await vi.advanceTimersByTimeAsync(20_000); // the kid looks at the viewfinder for a while
+    const late = readCodeStrip(card);
+    let settled = false;
+    void late.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect((await late).status).toBe('unavailable');
+  });
+
+  it('drops a load that stays silent for 150 s, and the next scan starts over', async () => {
+    const good = fakeWorker();
+    workerFactory((_o, call) => (call === 1 ? never() : Promise.resolve(good)));
+    const { readCodeStrip, ocrLoading } = await load(true);
+    const first = readCodeStrip(card);
+    await untilCreated();
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect((await first).status).toBe('unavailable');
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(spawned[0].terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(spawned[0].terminated).toBe(true);
+    expect(ocrLoading()).toBe(false);
+    const next = readCodeStrip(card, { maxPasses: 1 });
+    await untilCreated(2);
+    await vi.advanceTimersByTimeAsync(10);
+    expect((await next).status).toBe('done');
+  });
+
+  it('a scan waiting on a load that dies gets unavailable right away', async () => {
+    let die: (e: unknown) => void = () => undefined;
+    workerFactory((opts) => {
+      die = opts.errorHandler;
+      return never();
+    });
     const { readCodeStrip } = await load(true);
     const pending = readCodeStrip(card);
     await untilCreated();
-    await vi.advanceTimersByTimeAsync(29_000);
-    expect(spawned[0].terminated).toBe(false);
-    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.advanceTimersByTimeAsync(5_000);
+    die('TypeError: Failed to fetch');
+    await vi.advanceTimersByTimeAsync(10);
     expect((await pending).status).toBe('unavailable');
     expect(spawned[0].terminated).toBe(true);
   });
@@ -177,9 +244,10 @@ describe('readCodeStrip engine lifecycle', () => {
     expect(loading).toEqual([0, 0.45, 0.725, 0.95, 1]);
   });
 
-  it('stops waiting for the engine as soon as the scan is stopped, and drops a silent load', async () => {
+  it('stops waiting for the engine as soon as the scan is stopped, and keeps the load for the next scan', async () => {
     const good = fakeWorker();
-    workerFactory((_o, call) => (call === 1 ? never() : Promise.resolve(good)));
+    let finish: (w: FakeWorker) => void = () => undefined;
+    workerFactory(() => new Promise<FakeWorker>((resolve) => (finish = resolve)));
     const { readCodeStrip } = await load(true);
     let stale = false;
     const pending = readCodeStrip(card, { isStale: () => stale });
@@ -188,11 +256,13 @@ describe('readCodeStrip engine lifecycle', () => {
     stale = true;
     await vi.advanceTimersByTimeAsync(200);
     expect((await pending).status).toBe('stopped');
-    expect(spawned[0].terminated).toBe(true); // silent for 4 s: stuck, so the next scan starts over
+    expect(spawned[0].terminated).toBe(false); // silent, but maybe just a slow download: keep it
     const next = readCodeStrip(card, { maxPasses: 1 });
-    await untilCreated(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    finish(good);
     await vi.advanceTimersByTimeAsync(10);
     expect((await next).status).toBe('done');
+    expect(createWorker).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a load that is making progress when a scan is stopped', async () => {
@@ -228,6 +298,25 @@ describe('readCodeStrip engine lifecycle', () => {
     worker.recognize.mockClear();
     expect((await readCodeStrip(card, { maxPasses: 3 })).passes).toHaveLength(3);
     expect(worker.recognize).toHaveBeenCalledTimes(3);
+  });
+
+  it('reads a narrow band (a live camera frame) with the low-resolution passes', async () => {
+    const worker = fakeWorker(['noise']);
+    workerFactory(async () => worker);
+    const { readCodeStrip, CODE_PASSES, LOW_RES_PASSES } = await load();
+    const psm = () => worker.setParameters.mock.calls.map(([p]) => (p as { tessedit_pageseg_mode: string }).tessedit_pageseg_mode);
+    await readCodeStrip(card);
+    expect(psm()).toEqual(CODE_PASSES.map((p) => p.psm));
+    worker.setParameters.mockClear();
+    band.width = 400;
+    try {
+      await readCodeStrip(card);
+    } finally {
+      band.width = 700;
+    }
+    expect(psm()).toEqual(LOW_RES_PASSES.map((p) => p.psm));
+    expect(LOW_RES_PASSES).toHaveLength(CODE_PASSES.length); // the progress label counts n/6
+    expect(LOW_RES_PASSES.some((p) => p.negate)).toBe(false);
   });
 
   it('a stopped scan does not hold up the next one', async () => {

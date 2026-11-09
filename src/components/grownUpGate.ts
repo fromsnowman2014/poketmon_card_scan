@@ -40,3 +40,45 @@ export function confirmGrownUp(storage: SessionLike | undefined = session()): vo
 export function resetGrownUpGate(): void {
   okThisLoad = false;
 }
+
+/** Only web pages: a listing URL from the eBay worker must never run script (javascript:) or open another app. */
+export function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+export type OpenWindow = (url: string, target: string, features: string) => unknown;
+
+const browserOpen: OpenWindow = (url, target, features) =>
+  typeof window === 'undefined' ? null : window.open(url, target, features);
+
+/** Opens a shop page in a new tab that gets no handle on the app. False (nothing opened) for a non-web URL. */
+export function openShop(url: string, open: OpenWindow = browserOpen): boolean {
+  if (!isWebUrl(url)) return false;
+  open(url, '_blank', 'noopener');
+  return true;
+}
+
+/**
+ * What a tap on a shop button does. Shop links are buttons, not <a href>, so iOS long-press "Open in New Tab"
+ * can't skip the question: the shop opens only from here, once a grown-up said OK ('opened'); otherwise `ask`
+ * shows the question ('asked'). A non-web URL does nothing ('blocked').
+ */
+export function shopTap(
+  url: string,
+  ask: () => void,
+  open: OpenWindow = browserOpen,
+  storage: SessionLike | undefined = session(),
+): 'opened' | 'asked' | 'blocked' {
+  if (!isWebUrl(url)) return 'blocked';
+  if (!grownUpConfirmed(storage)) {
+    ask();
+    return 'asked';
+  }
+  openShop(url, open);
+  return 'opened';
+}

@@ -1,5 +1,5 @@
 # CI for pull requests; CI + GitHub Pages deploy for pushes to main.
-# One-time setup (see README "배포 / Deploying"): the repo must be public (or on GitHub Pro), and
+# One-time setup (see README "처음 배포하기 / First deploy"): the repo must be public (or on GitHub Pro), and
 # Settings → Pages → Source: "GitHub Actions". The base path comes from the Pages settings, so a renamed repo or a
 # custom domain needs no change here.
 name: Build & Deploy
@@ -10,8 +10,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# As in GitHub's Pages starter workflows: configure-pages reads the Pages site (needs Pages permission) and
+# deploy-pages publishes with an OIDC token.
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -42,25 +46,45 @@ jobs:
         run: node worker/test.mjs
 
       # Before the build: its base_path ("/poketmon_card_scan", or "" for a custom domain) becomes Vite's base.
-      # Until Pages is enabled (or when the app is hosted elsewhere, e.g. Cloudflare Pages) this step fails with
-      # "Get Pages site failed": the run stays green, skips the deploy and shows a warning instead.
-      - if: env.DEPLOY == 'true'
+      # It fails while GitHub Pages is off; the next step tells that case apart from real errors.
+      - name: Configure GitHub Pages
+        if: env.DEPLOY == 'true'
         id: pages
         continue-on-error: true
         uses: actions/configure-pages@v5
 
-      - name: Warn when GitHub Pages is off
-        if: env.DEPLOY == 'true' && steps.pages.outcome != 'success'
-        run: >-
-          echo "::warning title=Not deployed to GitHub Pages::Tests and build passed, but GitHub Pages is not enabled.
-          Settings → Pages → Source: GitHub Actions (a private repo needs GitHub Pro, or make it public), then
-          Actions → Build & Deploy → Run workflow. See README."
+      # Pages not enabled (API 404): expected before the one-time setup, or when the app is hosted on Cloudflare
+      # Pages. The run stays green, still builds, skips the deploy and says why. Anything else fails the run.
+      - name: Check GitHub Pages
+        if: env.DEPLOY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIGURED: ${{ steps.pages.outcome }}
+          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          err="$RUNNER_TEMP/pages-error.txt"
+          if source=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type' 2>"$err"); then
+            if [ "$source" = "legacy" ]; then
+              echo "::error title=GitHub Pages source is not GitHub Actions::Settings → Pages → Build and deployment → Source: choose \"GitHub Actions\" (it is \"Deploy from a branch\"), then Actions → Build & Deploy → Run workflow."
+              exit 1
+            fi
+            if [ "$CONFIGURED" != "success" ]; then
+              echo "::error title=GitHub Pages setup failed::GitHub Pages is enabled, but actions/configure-pages failed (see the \"Configure GitHub Pages\" step). Nothing was deployed."
+              exit 1
+            fi
+            echo "GitHub Pages is enabled (source: $source). Deploying to $PAGES_URL"
+          elif grep -q "HTTP 404" "$err"; then
+            echo "::warning title=Not deployed to GitHub Pages::GitHub Pages is not enabled for this repository, so this run only tests and builds. To publish: Settings → Pages → Source: GitHub Actions (a private repo needs GitHub Pro, or make it public), then Actions → Build & Deploy → Run workflow. Hosting on Cloudflare Pages instead? Then this warning is expected. See README."
+          else
+            echo "::error title=Could not check GitHub Pages::$(tr '\n' ' ' < "$err" | head -c 500)"
+            exit 1
+          fi
 
       - name: Type-check and build
         run: npm run build
         env:
-          # Deploys: the Pages path plus a trailing slash ("/" for a custom domain). PRs: /<repo name>/.
-          # vite.config.ts normalises the slashes.
+          # Deploys: the Pages path plus a trailing slash ("/" for a custom domain). PRs and runs without Pages:
+          # /<repo name>/. vite.config.ts normalises the slashes.
           BASE_PATH: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || format('/{0}/', github.event.repository.name) }}
 
       - if: steps.pages.outcome == 'success'
@@ -72,9 +96,6 @@ jobs:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.build.outputs.pages == 'success'
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

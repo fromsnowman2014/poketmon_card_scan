@@ -3,15 +3,15 @@ import { useRates } from '../lib/fx';
 import { formatMoney } from '../lib/pricing';
 import { useSettings } from '../lib/store';
 import { cx } from './cx';
-import { moneyChars } from './moneyChars';
+import { HANGUL, moneyChars, moneyParts } from './moneyChars';
 import './Money.css';
 
 export interface MoneyProps {
   /** Amount in USD (all prices are stored in USD). null/undefined renders "—". */
   usd: number | null | undefined;
-  /** Show a small "≈" before the amount (e.g. PriceSummary.converted). */
+  /** Mark the amount as approximate (e.g. PriceSummary.converted): a small "약" before won in the Korean UI ("약 4,760원"), else "≈". */
   approx?: boolean;
-  /** Adds a small line in the other currency underneath ("≈ ₩2,800"). */
+  /** Adds a small line in the other currency underneath ("≈ $3.50" under won; "약 4,760원" / "≈ ₩4,760" under dollars). */
   secondary?: boolean;
   /** Counts up to the value (600ms) — for the big price on the result screen. */
   animate?: boolean;
@@ -51,25 +51,28 @@ function useCountUp(target: number | null | undefined, enabled: boolean): number
 
 /**
  * A price in the user's display currency (settings.currency), using live exchange rates. With KRW the won amount
- * is the main number and the dollar amount the small secondary line, and the other way round with USD.
+ * is the main number and the dollar amount the small secondary line, and the other way round with USD. Won is
+ * written the Korean way in the Korean UI ("4,760원", "198만 원").
  */
 export function Money({ usd, approx, secondary, animate = false, className }: MoneyProps) {
-  const { currency } = useSettings();
+  const { currency, uiLang: lang } = useSettings();
   const rates = useRates();
   const shown = useCountUp(usd, animate);
   const other = currency === 'USD' ? 'KRW' : 'USD';
   const hasValue = typeof usd === 'number' && Number.isFinite(usd);
+  // Korean UI + won: "약 4,760원", "198만 원"; otherwise "≈ ₩4,760" / "≈ $3.50" (formatMoney).
+  const main = moneyParts(shown, currency, rates, { approx, lang });
   // The final amount (not the counting-up one), so a big total doesn't change size while it animates.
-  const style = { '--money-chars': moneyChars(formatMoney(usd, currency, rates), !!approx && hasValue) } as CSSProperties;
+  const style = { '--money-chars': moneyChars(formatMoney(usd, currency, rates, { approx, lang })) } as CSSProperties;
 
   return (
     <span className={cx('money', secondary && 'money-stack', className)} style={style}>
       <span className="money-main">
-        {approx && hasValue && <span className="money-approx">≈</span>}
-        {formatMoney(shown, currency, rates)}
+        {main.prefix && <span className={cx('money-approx', HANGUL.test(main.prefix) && 'money-approx-word')}>{main.prefix}</span>}
+        {main.amount}
       </span>
       {secondary && hasValue && (
-        <span className="money-sub">{formatMoney(usd, other, rates, { approx: approx || other === 'KRW' })}</span>
+        <span className="money-sub">{formatMoney(usd, other, rates, { approx: approx || other === 'KRW', lang })}</span>
       )}
     </span>
   );

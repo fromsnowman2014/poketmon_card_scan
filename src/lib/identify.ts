@@ -49,6 +49,11 @@ export async function identifyCard(card: HTMLCanvasElement, onProgress?: Progres
   return { rawText, code, candidates: await lookup(code, hint, onProgress, isStale), status };
 }
 
+/** The cards for a printed code (e.g. one fixed up from two looks), the way identifyCard looks them up. Never throws. */
+export function findCards(code: PrintedCode, opts: Pick<IdentifyOptions, 'langHint' | 'isStale'> = {}): Promise<CardBrief[]> {
+  return code.number ? lookup(code, opts.langHint, undefined, opts.isStale) : Promise.resolve([]);
+}
+
 async function jaSetIds(): Promise<string[]> {
   try {
     return (await getSets('ja')).map((s) => s.id);

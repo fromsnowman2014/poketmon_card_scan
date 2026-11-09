@@ -68,27 +68,35 @@ navigation uses `history.pushState(state, '')` **without changing the URL**; the
 
 ### Card screen layout
 Top to bottom, so that the price is the first thing under the card on every phone:
-1. Card art — width set by the viewport height (`.card-art`, `--card-art-reserve`), 126 px on an iPhone SE, up to 46% of
-   the width on tall phones. Tap to zoom (Sheet). With no picture, `CardImage code` prints set + number on the card back.
+1. Card art — sized so the price fits the first view: `useFitArt` (CardScreen.tsx) measures everything from the page top to
+   the end of the elements marked `FOLD_ATTR` (the big price and the low–high row) except the art itself, and hands it to
+   CSS as `--card-fold-h`; `.card-art` takes the height that is left above the tab bar and the raised Scan button (at least
+   92 px wide, up to 46% of the width / 220 px on tall phones; ~128 px on an iPhone SE). Re-measured on every resize (fonts,
+   another variant). Tap to zoom (Sheet). With no picture, `CardImage code` prints set + number on the card back.
 2. Title: the name in the UI language for JA/KO cards ("루차불" / "Hawlucha") with the printed name under it
    ("ルチャブル"); EN cards keep the English name (+ Korean name under it in the Korean UI). `format.cardNames`.
 3. One chip row: flag (language read by screen readers) + set name + `printedNumberOf(card)` ("#084/187", "#TG05/TG30",
    "#085"), plus the rarity in Korean in the Korean UI (`rarityLabel`).
-4. `PriceHero`: tier cheer on the panel edge, 시세 (+ variant name), the big `Money` (second currency under it), an
-   optional calm trend pill ("요즘 올랐어요 ▲25%"), the low–high row and the source line ("23시간 전 업데이트 · TCGplayer").
-   TCGplayer: "지금 파는 최저가" … "최고가". Cardmarket (converted, ≈ on both): one "요즘 거래 가격" label.
+4. `PriceHero`: tier cheer on the panel edge, 시세 (+ variant name) with the optional calm trend pill on the same row
+   ("요즘 올랐어요 ▲25%"), the big `Money` (second currency under it), the low–high row and the source line ("23시간 전
+   업데이트 · TCGplayer"), then a small "eBay 가격은 아래에 있어요 ↓" button that scrolls to the eBay panel and focuses its
+   heading (it sits under the source line, so it never pushes the low–high row down; below the fold on an SE).
+   TCGplayer: "지금 파는 최저가" … "최고가". Cardmarket (converted, 약/≈ on both): one "요즘 거래 가격" label.
+   Between the two numbers a static bar with a small "시세" / "Market" tag where 시세 sits (`format.rangeMarker`); when 시세
+   is within 2% of an end, or low = high, no bar: just "4,760원 ~ 9,000원" ("–" in English).
 5. `VariantPicker`, then `CollectButton`.
 6. `EbayPanel` (live Buy It Now total incl. shipping + 보통 가격 + auctions when the worker is set, and always three
    tiles: 경매 가격 보기 · 지금 살 수 있는 가격 · 팔린 가격 보기), then the "어른과 함께" disclaimer.
 7. `MorePrices` (closed `<details>`): raw TCGplayer USD / Cardmarket EUR numbers, TCGplayer link, the eBay search words.
 
-Measured in Chromium (Korean and English, dark and light, KRW and USD, with and without the worker): on 375×667,
-390×844 and 430×932 the big price, its second currency and the low–high row end above the tab bar and the raised
-Scan button for ja/SV8a-084, ko/SV8a-084, en/sv03.5-199 and en/svp-085. A two-line name or a trend pill on an SE
-pushes the low–high row under the tab bar; the price itself stays clear.
+Measured on the production build in Chromium (104 combinations: 375×667, 390×844 and 430×932 × Korean/English × KRW/USD
+× dark/light for ja/SV8a-084, ko/SV8a-084, en/sv03.5-199 and en/svp-085, plus trend-pill cards on the SE): the big price,
+its second currency and the low–high row end above the raised Scan button every time (on the SE the row ends at
+y ≈ 571, the button starts at 579). The worst case (two-line name, wrapped chips and a trend pill on an SE) shrinks the
+art towards its 92 px minimum.
 
 The screen also re-converts EUR prices with live rates (`applyRates(card, useRates())`), records history with the
-≈ flag, and copies freshly loaded prices onto saved copies of the card (`updateCollectionPrice`).
+approx flag, and copies freshly loaded prices onto saved copies of the card (`updateCollectionPrice`).
 
 ## Module APIs
 
@@ -196,8 +204,11 @@ export function summarize(tcg: TcgplayerPrice | null | undefined, cm: Cardmarket
 export function applyRates<T extends { variants: CardVariant[] }>(card: T, rates: Rates): T;  // re-summarizes every variant with new rates
 export function valueTier(usd: number | null | undefined): ValueTier;  // common <$1, nice <$5, rare <$25, super <$100, treasure ≥$100
 //   Shown as 동전 / 과자값 / 용돈 / 귀한 / 보물 카드 (Pocket change / Snack money / Allowance / Prized / Treasure).
-export function formatMoney(usd: number | null | undefined, currency: DisplayCurrency, rates?: Rates, opts?: { approx?: boolean }): string; // "$12.34", "₩16,500", "—"
-//   USD: cents below $1,000, whole dollars above ("$1,234"). KRW: rounded to ₩10 below ₩10,000, to ₩100 above. approx → "≈ " prefix.
+export function formatMoney(usd: number | null | undefined, currency: DisplayCurrency, rates?: Rates, opts?: { approx?: boolean; lang?: UiLang }): string;
+//   "$12.34", "₩16,500", "—". USD: cents below $1,000, whole dollars above ("$1,234"). KRW: rounded to ₩10 below ₩10,000,
+//   to ₩100 above. approx → "≈ " prefix. KRW with lang 'ko' is written the Korean way: "4,760원", "123,400원", and from
+//   1,000,000원 compact "198만 원" / "1억 2,000만 원"; approx → "약 4,760원". Money passes the UI language, so the Korean UI
+//   never shows "₩" or "≈ ₩" (English UI with won: "≈ ₩4,760"). This is the only place money is rounded.
 // Variant keys (buildVariants): "normal" | "holo" | "reverse" | "firstEdition", then "-<foil>" ("reverse-masterball"),
 //   "-<subtype>" ("holo-shadowless"; "unlimited" is left out), "-<size>" ("normal-jumbo") and "-stamp-<stamps>"
 //   ("reverse-stamp-gamestop", "normal-stamp-poketour-99"); "-2", "-3" only for true duplicates. CardVariant also
@@ -206,12 +217,16 @@ export function formatMoney(usd: number | null | undefined, currency: DisplayCur
 //   "-holo" fields and TCGplayer "reverse-holofoil".
 // defaultVariant: the most common printing that has a price — normal > holo > other regular printings (shadowless…) >
 //   1st edition > reverse > special foils > stamped/jumbo — else the most common one.
-// summarize: TCGplayer when it has market ?? mid: low = min(low, market); high = TCGplayer high if ≤ 3× market, else the
-//   largest of mid, market, directLow and Cardmarket max(avg, avg30, trend) in USD; always ≥ market.
+// summarize: TCGplayer when it has market ?? mid: low = min(low, market); high = TCGplayer high if ≤ 3× market
+//   (HIGH_MAX_RATIO), else the largest of mid, directLow and Cardmarket avg / avg30 / trend in USD that is itself
+//   ≤ 3× market (each checked on its own, so one spiky average doesn't hide a sane trend); market when none passes;
+//   always ≥ market.
 //   Else Cardmarket EUR→USD (converted): market = trend ?? avg30 ?? avg ?? avg7; low/high = min/max of avg1, avg7, avg30,
 //   trend, market (+avg for high) — Cardmarket's raw "low" is a junk listing.
 //   changePct = Cardmarket avg7 vs avg30, only when market ≥ $2, avg30 ≥ €1, 10% ≤ |move| ≤ 100%, and (TCGplayer
-//   headline) Cardmarket's price is within 0.5–2× of it; else null. Money rounded to cents; null without a headline.
+//   headline) Cardmarket's price is within 0.5–2× of it; else null. null without a headline. Amounts are exact USD, never
+//   rounded to cents (€0.04 = $0.0447 → "약 60원", not the 50원 a rounded $0.04 gives); only formatMoney rounds.
+//   valueTier compares whole cents, like the dollar amount shown.
 ```
 
 ### lib/imageProc.ts / lib/parseCode.ts / lib/ocr.ts / lib/identify.ts (scan)
@@ -226,7 +241,7 @@ export function cropToCard(source: HTMLVideoElement | HTMLImageElement | ImageBi
 export function cropTurnedCard(source: CardSource, q: QuarterTurns, frame?: BoxLike): HTMLCanvasElement; // card cut from the photo turned q×90° clockwise
 export function turnPicture(source: CardSource, q?: QuarterTurns /* 1 */): HTMLCanvasElement;  // whole photo turned (Rotate button), long side ≤ 2400 px
 export const CODE_STRIP: Rect;        // collector-line band { x 0, y .86, w .55, h .14 } of the 63:88 crop
-export const SMALL_CODE_STRIP: Rect;  // the band above it { y .78, h .14 }: a card held at ~70–88% of the guide
+export const SMALL_CODE_STRIP: Rect;  // the band above it { y .78, h .14 }: a card held at ~70–88% of the guide (photo path)
 export function fileToBitmap(file: Blob): Promise<ImageBitmap | HTMLImageElement>;   // picked photo, EXIF-upright (<img> fallback)
 export function canvasToDataUrl(canvas: HTMLCanvasElement, maxW?: number /* 320 */, quality?: number /* .8 */): string; // JPEG
 export function releaseCanvas(canvas: HTMLCanvasElement): void;   // free canvas memory now (iOS has a hard budget)
@@ -245,14 +260,20 @@ export function readCodeStrip(card: HTMLCanvasElement, opts?: ReadCodeOptions): 
 //   ReadCodeOptions { onProgress?; shouldStop?(merged, parsed); isStale?(): boolean; maxPasses?: number; band?: Rect; parse? }
 //   CodeStripResult { passes: { text; parsed }[]; merged: ParsedCode; status: 'done' | 'stopped' | 'unavailable' }
 export const CODE_PASSES: readonly CodePass[];               // the passes, best first (the Scan screen shows i/6 progress)
+export const LOW_RES_PASSES: readonly CodePass[];            // 6 passes tuned for a band under 520 source px (a 1080p camera crop)
+export function ocrLoading(): boolean;                       // the engine is still downloading (the scan gave up waiting, not the load)
 export function interiorText(tsv: string | null | undefined, top: number, bottom: number): string | undefined;
-//   Up to 6 preprocessing passes over `band` (default CODE_STRIP), voted together. Never throws. Text whose line box is
-//   cut by the band's top or bottom edge is ignored (interiorText), so half a line can't be misread (084 → 053).
-// Engine load: createWorker's errorHandler is raced against it (tesseract never rejects a failed language download);
-//   each load step gets a 30 s stall timer that restarts on progress; a stall or failure terminates the worker
-//   (captured through a short Worker-constructor wrap) and forgets the engine, so the next scan retries → status
-//   'unavailable'. A recognize pass that hangs 20 s resets the engine. isStale is polled every 150 ms while waiting;
-//   stopping a scan whose engine was silent ≥ 3 s drops the load.
+//   Up to 6 preprocessing passes over `band` (default CODE_STRIP), voted together; a band narrower than 520 source px
+//   uses LOW_RES_PASSES instead. Never throws. Text whose line box is cut by the band's top or bottom edge is ignored
+//   (interiorText), so half a line can't be misread (084 → 053).
+// Engine load: createWorker's errorHandler is raced against it (tesseract never rejects a failed language download).
+//   Waiting and killing are separate. A scan stops WAITING after 30 s without load progress (counted from when it started
+//   waiting) → status 'unavailable', and the Scan screen shows 'ocrSlow' while ocrLoading() is true ("번호 읽기 도구를
+//   아직 받고 있어요"). The load goes on in the background and the next scan reuses it; stopping a scan (X / Back) never
+//   drops it. The engine is KILLED only on errorHandler or when one load step is silent for 150 s (tesseract reports
+//   progress only at the start and end of the ~3 MB language file): the worker is terminated (captured through a short
+//   Worker-constructor wrap) and forgotten, so the next scan downloads afresh → 'ocrUnavailable'. A recognize pass that
+//   hangs 20 s resets the engine. isStale is polled every 150 ms while waiting.
 
 // identify.ts
 export function identifyCard(card: HTMLCanvasElement, onProgress?: ProgressFn, opts?: { langHint?: CardLang; isStale?; maxPasses?; band? }): Promise<IdentifyOutcome>;
@@ -262,20 +283,33 @@ export function identifyCard(card: HTMLCanvasElement, onProgress?: ProgressFn, o
 //   Stops early once two passes agree and resolveSets gives exactly one set. 1–3 s on desktop, expect 2–4× on phones.
 //   langHint 'ko' turns a JA-style code into code.lang 'ko' (OCR cannot see Hangul); lookups still go to 'ja'.
 //   A single misread pass can still win (e.g. 054 for 084): never navigate on a lone candidate without the check below.
+export function findCards(code: PrintedCode, opts?: { langHint?; isStale? }): Promise<CardBrief[]>;
+//   The lookup identifyCard does, for a code fixed up from several looks (scanCard's short-total retry). Never throws.
 
 // screens/scan/scanCard.ts — the Scan screen's policy on top of identifyCard
-export function scanCard(card: HTMLCanvasElement, onProgress: ScanProgress, opts?: { isStale?; turned?: (q: 1 | 3) => HTMLCanvasElement; now? }): Promise<ScanOutcome>;
+export function scanCard(card: HTMLCanvasElement, onProgress: ScanProgress, opts?: { isStale?; turned?: (q: 1 | 3) => HTMLCanvasElement; live?: boolean; now? }): Promise<ScanOutcome>;
 //   ScanOutcome { code, candidates, sure, status, card? (the turned crop the result came from; caller frees it), band? }
 //   ScanProgress(stage, progress, look: 1 | 2 | 'turn') — Analyzing shows "카드를 돌려서 볼게요…" for 'turn'.
-//   sure = exactly one candidate whose number matches and whose printed set code names that set with a matching total
-//   (resolveSets score 1). Sure → open the card directly (replace, ?from=scan). Not sure, in order: when no number was read,
-//   the higher band (SMALL_CODE_STRIP, 3 passes), then — photo path only — the photo turned 90° and 270° (2 passes each);
-//   then one second look at a resampled copy (+≈1.5 s). Extra tries stop starting after 10 s without any number read.
-//   Then "Is this your card?" (one candidate: side by side with the kid's photo), then the number form, pre-filled with
-//   what OCR read, showing an enlarged crop of the band the number was read in, with a reason: notFound, unread (+ "hold
-//   the card upright and fill the box" tip) or ocrUnavailable ("번호 읽기 도구를 못 불러왔어요").
+//   live: a camera frame (CameraView); photos and the Rotate button pass `turned` instead.
+//   sure = exactly one candidate whose number matches (sameNumber: a card that prints leading zeros must be read with
+//   them — "4" or "84" is never sure for #084) and whose printed set code names that set with a matching total
+//   (resolveSets score 1). On a crop under 1000 px wide (CONFIRM_BELOW_PX, i.e. camera frames) a sure read also needs a
+//   second look that read the same number, and no look may have read another number on the same line.
+//   Sure → open the card directly (replace, ?from=scan). Not sure, in order:
+//   - no number read (photo path): the photo turned 90° and 270° (2 passes each) and the higher band (SMALL_CODE_STRIP,
+//     3 passes); the turns go first when the first look looksSideways (no digit, or mostly 1–2 character fragments);
+//   - live path: the crop zoomed to its central 88% and 80% (LIVE_ZOOMS, a second crop scale; no higher band);
+//   - then one second look at a resampled copy of the best read (+≈1.5 s). At most 4 looks (24 passes) per live frame.
+//   Extra tries stop starting 10 s after the first look ends unless a number was read (worst case before the number
+//   form: first look + 10 s + the try still running). A total read short ("084/18") is looked up again with the longer
+//   total another look read (findCards). Sure results from a zoomed look report `band` mapped back to the crop (unzoom).
+//   Then "Is this your card?" (the card most looks agree on first; one candidate: side by side with the kid's photo),
+//   then the number form, pre-filled with what OCR read, showing an enlarged crop of the band the number was read in,
+//   with a reason: notFound, unread (+ "hold the card upright and fill the box" tip), ocrSlow (still downloading:
+//   "번호 읽기 도구를 아직 받고 있어요 · 조금 뒤에 다시 찍어 봐요") or ocrUnavailable ("번호 읽기 도구를 못 불러왔어요").
 // PhotoAdjust has a "⟳ 돌리기 / Rotate" button (turnPicture 90°, safe against double taps and Back).
-// Stopping (X / Back) makes isStale true: OCR stops between passes, lookups are skipped, the next scan doesn't queue.
+// Stopping (X / Back) makes isStale true: OCR stops between passes, lookups are skipped, the next scan doesn't queue;
+//   an engine download in progress keeps going.
 ```
 
 ### Korean cards across screens
@@ -349,7 +383,7 @@ export function pushHistory(card: CardDetail, priceUsd: number | null, approx?: 
 export function clearHistory(): void;
 export function useSnapshots(): ValueSnapshot[];                               // oldest first, one per local day, max 120
 export function recordSnapshot(items: readonly CollectionItem[]): void;          // upsert today's total + per-card [usd, qty] (no-op when unchanged)
-export function collectionTotalUsd(items: CollectionItem[]): number;            // Σ priceUsd × qty, cents
+export function collectionTotalUsd(items: CollectionItem[]): number;            // Σ priceUsd × qty (not rounded to cents; 1/100 cent against float noise)
 export function resetAllData(): void;                                           // all keys above + settings + scan photos + clearCache()
 // Keys "cc:settings", "cc:collection", "cc:history", "cc:snapshots", "cc:thumbs", each { v: 1, data }; unreadable,
 //   foreign-version or malformed entries fall back to defaults (bad items are dropped individually). Thumbs live in
@@ -380,7 +414,8 @@ export function nameInUiLang(name: string, lang: UiLang): string | undefined;  /
 export function weekChange(snapshots: readonly ValueSnapshot[], items: readonly Pick<CollectionItem, 'key' | 'priceUsd' | 'qty'>[], today: string): { deltaUsd: number; days: number } | null;
 //   against the earlier snapshot with per-card data closest to 7 days before today (the older one on a tie); days < 7
 //   while the app is new. Only cards present at both times count, as min(qty now, qty then) × (price now − price then):
-//   adding or removing cards is never a rise or drop. null without a baseline or a card in common.
+//   adding or removing cards is never a rise or drop. null without a baseline or a card in common. deltaUsd is rounded
+//   to cents, so a sub-cent move counts as no change (Home and My Cards hide the line at 0).
 export function todayLocal(d?: Date): string;                                   // "YYYY-MM-DD", the snapshot date format
 // useOnline.ts
 export function useOnline(): boolean;                                           // navigator.onLine, re-renders on change
@@ -388,17 +423,22 @@ export function useOnline(): boolean;                                           
 
 ### Links that leave the app (grown-up check)
 ```ts
-// components/ExternalLink.tsx — <a target="_blank" rel="noopener"> for shops (eBay tiles and auction rows, TCGplayer)
-export function ExternalLink(props: { href: string; site: 'eBay' | 'TCGplayer' | 'Cardmarket' } & AnchorHTMLAttributes): JSX.Element;
-//   First tap in a session opens a Sheet: "eBay 웹사이트로 가요 · eBay는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"
-//   Cancel opens nothing; "어른과 함께 볼게요" opens the link (window.open) and remembers the OK for the session.
+// components/ExternalLink.tsx — shops (eBay tiles and auction rows, TCGplayer): a <button type="button" role="link">
+// with no href (styled by its usual classes over a zero-specificity button reset), so there is no URL to long-press.
+export function ExternalLink(props: { href: string; site: 'eBay' | 'TCGplayer' | 'Cardmarket' } & ButtonHTMLAttributes): JSX.Element;
+//   Tap or Enter → shopTap: the first time in a session a Sheet asks "eBay 웹사이트로 가요 · eBay는 진짜로 카드를
+//   사고파는 곳이에요. 어른과 함께 볼까요?"; Cancel opens nothing; "어른과 함께 볼게요" remembers the OK for the session and
+//   opens the page with window.open(url, '_blank', 'noopener'). Later taps open directly.
 // components/grownUpGate.ts
 export const GROWN_UP_KEY = 'cc:grownUpOk';      // sessionStorage; falls back to memory when storage is blocked
 export function grownUpConfirmed(): boolean;
 export function confirmGrownUp(): void;
+export function isWebUrl(url: string): boolean;  // http/https only: a javascript: URL from a worker never opens
+export function openShop(url: string, open?): boolean;   // window.open(url, '_blank', 'noopener'); false for non-web URLs
+export function shopTap(url: string, ask: () => void, open?, storage?): 'opened' | 'asked' | 'blocked';
 ```
-It is a soft check (a long-press "open in new tab" skips it). Tiles use viewing words (경매 가격 보기 · 지금 살 수
-있는 가격 · 팔린 가격 보기), an external-link icon and the caption "eBay 웹사이트가 열려요 · 어른과 함께 봐요".
+Tiles use viewing words (경매 가격 보기 · 지금 살 수 있는 가격 · 팔린 가격 보기), an external-link icon and the caption
+"eBay 웹사이트가 열려요 · 어른과 함께 봐요". Middle-click / Ctrl-click no longer open shop pages (by design).
 
 UI building blocks (components, CSS classes, copy tone): see [UI-KIT.md](UI-KIT.md).
 
@@ -419,29 +459,33 @@ Runtime caches:
 | Cache | URLs | Strategy |
 |---|---|---|
 | `card-data` | `api.tcgdex.net` GET requests (POST GraphQL is not cached; `cache.ts` keeps those results in localStorage) | NetworkFirst, 8 s timeout, 7 days |
-| `card-images` | `assets.tcgdex.net` — `CardImage` loads these with `crossOrigin="anonymous"` so the responses are cacheable (opaque ones are not) | CacheFirst, 600 entries, 30 days |
+| `card-images-opaque` (first rule) | `assets.tcgdex.net` requests made without CORS (`request.mode === 'no-cors'`): pictures whose CORS headers come twice, which browsers reject — every Japanese one and a few English ones (e.g. sv03-125) — so `CardImage` retries them plain. Once a plain retry of a Japanese picture has worked, later `assets.tcgdex.net/ja/` pictures load plain from the start (sessionStorage `cc:jaImgPlain`) | CacheFirst, status 0 only, 60 entries (each opaque response counts several MB of quota), 30 days, purged on quota errors |
+| `card-images` | `assets.tcgdex.net` with CORS — `CardImage` loads EN pictures with `crossOrigin="anonymous"` so the responses are cacheable normally | CacheFirst, 600 entries, 30 days |
 | `ocr-assets` | tesseract.js worker, core and `eng` data on jsDelivr. The worker loads the engine with `importScripts`, which gives opaque responses, so status 0 is allowed | CacheFirst, 90 days |
 | `fonts` | Pretendard stylesheet (loaded with `crossorigin`) and its unicode-range subsets on jsDelivr | CacheFirst, 120 entries, 1 year |
 
 After one online scan the OCR engine works offline; matching the code still needs card data, so offline scans only
-find cards that were looked up before. TCGplayer fallback images have no CORS headers and stay in the browser's HTTP
-cache only.
+find cards that were looked up before. Cards opened online (EN and JA pictures) show their picture offline. TCGplayer
+fallback images have no CORS headers and stay in the browser's HTTP cache only.
 
 ## Price logic (summary)
 
 * Headline **시세 / Market**: TCGplayer `marketPrice` (fallback `midPrice`) for the selected variant; if no TCGplayer data,
-  Cardmarket `trend` (fallback `avg30`, `avg`, `avg7`) converted EUR→USD and flagged `converted` (shown with "≈", in
-  the hero, its low/high, saved cards, Recent and totals).
+  Cardmarket `trend` (fallback `avg30`, `avg`, `avg7`) converted EUR→USD and flagged `converted` (shown as approximate —
+  "약 4,760원" in the Korean UI with won, "≈ $3.50" / "≈ ₩4,760" otherwise — in the hero, its low/high, saved cards,
+  Recent and totals). Korean UI + won writes amounts the Korean way everywhere: "4,760원", "198만 원".
 * **Low / high** — labelled by what they are. TCGplayer: "지금 파는 최저가 / Lowest for sale now" (`lowPrice`, ≤ market)
-  and "최고가 / Highest" (`highPrice` unless it is a > 3× placeholder; then the largest real number: mid, market, Direct
-  low, Cardmarket's averages; ≥ market). Cardmarket: one "요즘 거래 가격 / Recent prices" label over the min/max of the
-  recent averages (its raw `low` is a junk listing). The bar between them is a static picture, not a slider.
+  and "최고가 / Highest" (`highPrice` unless it is above 3× market; then the largest of mid, Direct low and Cardmarket's
+  averages that is itself ≤ 3× market, else market). Cardmarket: one "요즘 거래 가격 / Recent prices" label over the
+  min/max of the recent averages (its raw `low` is a junk listing). The bar between them is a static picture with a
+  "시세" tag, not a slider, and is left out ("~") when 시세 sits at one end.
 * **Trend**: Cardmarket `avg7` vs `avg30` → `changePct`, only for real moves (see pricing rules); shown as a small grey
   pill "요즘 올랐어요 ▲25%" / "요즘 내렸어요 ▼12%" with only the arrow and number coloured. No pill = no notable move.
 * **eBay**: always deep links (auctions ending soonest, Buy It Now lowest price + shipping, sold listings), through the
   grown-up check. With the worker: "지금 살 수 있는 최저가" = lowest Buy It Now **total incl. shipping** with
-  "배송비 $4.50 포함" / "무료 배송" / "배송비 별도" (lowestShipping unknown), "보통 가격" = median total of a Best Match sample
+  "배송비 6,130원 포함" / "무료 배송" / "배송비 별도" (lowestShipping unknown), "보통 가격" = median total of a Best Match sample
   (50 listings; the price-sorted 50 when there is only one page), the caption "미국 eBay 기준 · 한국으로 배송하면 더 비싸요",
-  and up to 3 auctions (현재가 / 시작가, "입찰 3번" / "아직 입찰 없음", time left; heading "경매 중 약 12개" when eBay counts
+  and up to 3 auctions (현재가 / 시작가 **plus shipping** with the same note as Buy It Now — "배송비 1,700원 포함",
+  "무료 배송", or the bid alone with "배송비 별도" — so they compare; "입찰 3번" / "아직 입찰 없음", time left; heading "경매 중 약 12개" when eBay counts
   more than came back, hidden when the worker filtered them all). Lots, playsets, repacks and fakes are always dropped,
   graded slabs unless the query names a grader. The worker rate-limits each IP (30/min by default).

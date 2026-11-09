@@ -46,7 +46,10 @@ export interface CardmarketPrice {
   avg30: number | null;
 }
 
-/** Normalized, display-ready price summary for one variant. ALL values in USD. */
+/**
+ * Normalized price summary for one variant. ALL values in USD, exact (EUR converted at the current rate), not rounded
+ * to cents: they are rounded once, for display, by pricing.formatMoney.
+ */
 export interface PriceSummary {
   /** Headline "market price" (시세). */
   market: number | null;
@@ -62,7 +65,7 @@ export interface PriceSummary {
   changePct: number | null;
   /** Where the headline number came from. */
   source: 'tcgplayer' | 'cardmarket';
-  /** True when the numbers were converted from EUR (Cardmarket) — show as approximate (≈). */
+  /** True when the numbers were converted from EUR (Cardmarket) — show as approximate ("약 4,760원" / "≈ $3.50"). */
   converted: boolean;
   /** ISO timestamp of the source price update, if known. */
   updated?: string;

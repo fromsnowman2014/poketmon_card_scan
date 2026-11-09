@@ -53,7 +53,7 @@
 
 - 카드 정보와 가격은 [TCGdex](https://tcgdex.dev) 에서 가져와요. **매일 업데이트**돼요.
   - **TCGplayer** (미국, 달러) — 주로 영어 카드
-  - **Cardmarket** (유럽, 유로) — 일본 카드 포함. 달러로 바꿔서 **≈** 표시와 함께 보여 줘요.
+  - **Cardmarket** (유럽, 유로) — 일본 카드 포함. 원(또는 달러)으로 바꿔서 **약** 표시와 함께 보여 줘요. (예: `약 4,760원`, 달러는 `≈ $3.50`)
 - 환율은 [open.er-api.com](https://open.er-api.com) (실패하면 Frankfurter)에서 가져와요.
 - **eBay**: 버튼을 누르면 eBay 검색 결과(경매 마감 임박순 · 즉시구매 최저가순 · 최근 팔린 순)가 열려요.
 
@@ -67,7 +67,7 @@
 ### (선택) eBay 실시간 가격
 
 무료 Cloudflare 워커를 한 번 설치하면 앱 안에서 **즉시구매 최저가와 경매 현황**을 바로 볼 수 있어요.
-(즉시구매 가격은 **미국 배송비 포함** 가격이에요.)
+(즉시구매 가격과 경매 현재가 모두 **미국 배송비 포함** 가격이에요. 배송비를 모르는 경매는 "배송비 별도"라고 보여 줘요.)
 부모님용 단계별 안내: **[worker/README.md](worker/README.md)**
 
 ## 처음 배포하기 (저장소 관리자용)
@@ -96,6 +96,8 @@ GitHub 무료 플랜에서는 **비공개(private) 저장소에 GitHub Pages를 
 4. 2–3분 뒤 초록 ✓ 가 뜨면 완성! 👉 **https://fromsnowman2014.github.io/poketmon_card_scan/**
    - 주소 모양: `https://<GitHub 사용자 이름>.github.io/<저장소 이름>/`
    - 이후에는 `main` 이 바뀔 때마다 자동으로 테스트 → 빌드 → 배포돼요. 저장소 이름을 바꾸거나 개인 도메인을 붙여도 설정은 그대로 두면 돼요.
+   - 빨간 ✗ 가 뜨면 실행을 눌러 맨 위 오류 문장을 읽어요. "GitHub Pages source is not GitHub Actions" 이면 2번에서 **GitHub Actions** 를 골랐는지 확인하고 3번을 다시 해요.
+     노란 "Not deployed to GitHub Pages" 경고만 있으면 Pages가 아직 꺼져 있다는 뜻이에요 (2번부터).
 
 *B. 비공개로 두고 Cloudflare Pages로 무료 배포하기*
 
@@ -174,12 +176,12 @@ Home Screen apps are not subject to Safari's 7-day storage limit (a Safari tab l
 **Scanning tips:** good light, fill the frame with the card, tilt to avoid glare (take it out of the sleeve if you can), and make sure the
 small code at the bottom-left — like `sv8a 084/187` — is sharp. You can always type the name or number instead.
 
-**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) and Cardmarket (EUR, converted to USD and shown with ≈).
+**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) and Cardmarket (EUR, converted and shown as approximate: "≈ $3.50", or "약 4,760원" in the Korean UI).
 **Honest limits:** there is no free sold-price API (use the eBay "Sold" link), prices are estimates that depend on condition and grading,
 and some Japanese cards have no price data. **Ask a grown-up before buying or selling.**
 
 **Optional live eBay prices:** deploy the free Cloudflare worker — step-by-step guide in [worker/README.md](worker/README.md).
-Buy It Now prices there include US shipping.
+Buy It Now prices and current auction bids there include US shipping (an auction with unknown shipping says "+ shipping").
 
 ### First deploy (repo owner)
 
@@ -196,6 +198,8 @@ Do this once, in a browser signed in to <https://github.com>; nothing to install
      4. After the green check (2–3 min) the app is live at **https://fromsnowman2014.github.io/poketmon_card_scan/**
         (pattern: `https://<github-user>.github.io/<repo-name>/`). Every later change to `main` is tested, built and deployed automatically;
         the base path is read from the Pages settings, so renaming the repo or adding a custom domain needs no change.
+        A red ✗ names the problem at the top of the run: "GitHub Pages source is not GitHub Actions" means step A2 still says
+        "Deploy from a branch" (fix it, then repeat A3). A yellow "Not deployed to GitHub Pages" warning means Pages is still off (start at A2).
    - **B. Keep it private and use Cloudflare Pages (free).** Create a free account at <https://dash.cloudflare.com/sign-up> →
      **Workers & Pages → Create → Pages → Connect to Git**, allow access to this repo only, then set: production branch `main`,
      framework preset `None`, build command `npm run build`, build output directory `dist`, environment variables `BASE_PATH` = `/` and

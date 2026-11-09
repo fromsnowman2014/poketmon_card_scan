@@ -13,7 +13,7 @@ import {
   turnPicture,
   type Rect,
 } from '../lib/imageProc';
-import { preloadOcr } from '../lib/ocr';
+import { ocrLoading, preloadOcr } from '../lib/ocr';
 import { goBack, navigate } from '../lib/router';
 import { rememberScanPhoto } from '../lib/store';
 import type { CardBrief, PrintedCode } from '../lib/types';
@@ -84,6 +84,12 @@ function previewBand({ band, code }: ScanOutcome): Rect {
   return { ...CODE_STRIP, y: SMALL_CODE_STRIP.y, h: 1 - SMALL_CODE_STRIP.y };
 }
 
+/** Why the number form shows: no OCR engine (still downloading, or failed), nothing read, or nothing found. */
+function manualReason(status: ScanOutcome['status'], code: PrintedCode): ManualReason {
+  if (status === 'unavailable') return ocrLoading() ? 'ocrSlow' : 'ocrUnavailable';
+  return code.number ? 'notFound' : 'unread';
+}
+
 const cardPath = (card: CardBrief) => `/card/${card.lang}/${encodeURIComponent(card.id)}?from=scan`;
 
 export default function ScanScreen() {
@@ -114,8 +120,8 @@ export default function ScanScreen() {
     else setPhase({ kind: 'pick', shot, candidates: cards });
   };
 
-  /** `turned`: the photo path's sideways retries; `done` runs when the scan is over (frees the photo). */
-  const analyze = async (card: HTMLCanvasElement, opts: Pick<ScanOptions, 'turned'> & { done?: () => void } = {}) => {
+  /** `turned`: the photo path's sideways retries; `live`: a camera frame; `done` runs when the scan is over (frees the photo). */
+  const analyze = async (card: HTMLCanvasElement, opts: Pick<ScanOptions, 'turned' | 'live'> & { done?: () => void } = {}) => {
     const id = ++run.current;
     const isStale = () => id !== run.current;
     const photo = canvasToDataUrl(card, PHOTO_WIDTH, 0.8);
@@ -126,7 +132,7 @@ export default function ScanScreen() {
       (stage, value, look) => {
         if (!isStale()) setProgress({ stage, value, look });
       },
-      { isStale, turned: opts.turned },
+      { isStale, turned: opts.turned, live: opts.live },
     ).finally(opts.done);
     const { candidates, code, sure, status } = outcome;
     // A number read from the photo turned sideways: show that crop from now on.
@@ -141,7 +147,7 @@ export default function ScanScreen() {
     if (outcome.card) releaseCanvas(outcome.card);
     if (!current) return;
     if (candidates.length) found(candidates, shot, sure);
-    else setPhase({ kind: 'manual', shot, reason: status === 'unavailable' ? 'ocrUnavailable' : code.number ? 'notFound' : 'unread' });
+    else setPhase({ kind: 'manual', shot, reason: manualReason(status, code) });
   };
 
   const openPhoto = async (file: File) => {
@@ -186,7 +192,7 @@ export default function ScanScreen() {
       return (
         <main className="scan">
           <CameraView
-            onCapture={(card) => void analyze(card)}
+            onCapture={(card) => void analyze(card, { live: true })}
             onPhoto={(file) => void openPhoto(file)}
             onLeave={(path) => (path ? navigate(path) : goBack('/'))}
           />

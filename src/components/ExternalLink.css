@@ -1,3 +1,22 @@
+/* Shop links (ExternalLink) are <button>s: drop the button look so the caller's class styles it like a link.
+   Zero specificity (:where), so any class (.btn, .card-ebay-link, .card-auction) wins over this reset. */
+:where(button.ext-link) {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
 /* Grown-up check sheet shown before a shop link opens (ExternalLink). */
 
 .ext-gate {

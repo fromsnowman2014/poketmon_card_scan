@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { identifyCard } from './identify';
+import { findCards, identifyCard } from './identify';
 import { readCodeStrip, type ReadCodeOptions } from './ocr';
 import { mergeParses, parsePrintedCode, type ParsedCode } from './parseCode';
 import { findByCode, getSets, resolveSets, type SetInfo } from './tcgdex';
@@ -189,5 +189,24 @@ describe('identifyCard status and cancellation', () => {
     vi.mocked(preloadOcr).mockReturnValueOnce(new Promise(() => undefined)); // a stalled download
     ocrReads('G sv8a 084/187', 'G sv8a 084/187');
     expect((await identifyCard(card)).candidates).toHaveLength(1);
+  });
+});
+
+describe('findCards', () => {
+  it('looks a printed code up like identifyCard does, and nothing without a number', async () => {
+    expect(await findCards({ setCode: 'SV8a', number: '084', total: '187', lang: 'ja' })).toEqual([brief('SV8a-084')]);
+    expect(findByCode).toHaveBeenCalledWith(expect.objectContaining({ number: '084' }), ['ja']);
+    vi.mocked(findByCode).mockClear();
+    expect(await findCards({ total: '187' })).toEqual([]);
+    expect(findByCode).not.toHaveBeenCalled();
+  });
+
+  it('tries the other language when the first finds nothing, and never throws', async () => {
+    vi.mocked(findByCode).mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('offline'));
+    expect(await findCards({ number: '084', total: '187' })).toEqual([]);
+    expect(findByCode).toHaveBeenCalledTimes(1); // no set code: ja and en are one lookup
+    vi.mocked(findByCode).mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([brief('sv03.5-199', 'en')]);
+    expect(await findCards({ setCode: 'SV8a', number: '199', total: '165', lang: 'ja' })).toEqual([brief('sv03.5-199', 'en')]);
+    expect(vi.mocked(findByCode).mock.calls.map((c) => c[1])).toEqual([['ja'], ['en']]);
   });
 });

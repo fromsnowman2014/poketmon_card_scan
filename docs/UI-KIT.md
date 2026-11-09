@@ -41,7 +41,10 @@ export default function CollectionScreen() {
 - Anything that must be readable on the first view (the Card screen's price) has to end above
   `100svh - var(--safe-bottom) - var(--tabbar-h) - var(--tabbar-lift) - 5px`: the raised Scan button sits
   horizontally centered, right where centered content is. Check it at 375×667 (iPhone SE). The Card screen's order
-  (art → name → chips → price → variants → add → eBay → more) is in ARCHITECTURE.md › Card screen layout.
+  (art → name → chips → price → variants → add → eBay → more) is in ARCHITECTURE.md › Card screen layout. There the
+  elements that must fit carry `data-card-fold` (`FOLD_ATTR` from PriceHero); CardScreen measures how far down they end
+  (minus the art) into `--card-fold-h`, and the art takes whatever height is left (min 92px wide). Add new
+  above-the-price content inside that measured area and the art shrinks for it; don't hard-code reserves.
 - A screen without a TopBar gets a status-bar scrim from global.css (dark: frosted strip that fades in once the page
   is scrolled, via `<html data-scrolled>`; light: the gradient strip, always on).
 - `<TopBar>` comes first. It is sticky and covers the status-bar area (`safe-area-inset-top`). A screen without a
@@ -126,10 +129,10 @@ All accept `className`. All built-in text is bilingual.
 | `Icon` | `name: IconName; size?=24; strokeWidth?=2; label?` | Lucide-style. Names: `home camera cards search settings chevron-left chevron-right plus minus trash refresh external-link image keyboard zap x check trending-up trending-down steady sparkles info globe sun moon gavel tag cart receipt flashlight`. Decorative unless `label` is given |
 | `TopBar` | `title?; back?: boolean \| string; onBack?; left?; right?` | Sticky, gains a blurred backdrop on scroll. `back` shows ‹ which calls `goBack(fallback)`; a string is the fallback path (default `/`). `left` is used only without a back button |
 | `TabBar` | — | Rendered by App. Home · raised Scan · My Cards. Hidden on `/scan`; no tab is active on `/card/…` |
-| `CardImage` | `image?; fallback?; photo?; alt; size?: 'thumb' \| 'full'; tier?; eager?; code?: { set; number }` | Tries TCGdex `${image}/low|high.webp` (a CORS failure is retried once as a plain image) → `fallback` (CardDetail.imageFallback) → `photo` (user data URL) → original card-back art. With `code`, the set code and number are printed on the card back whenever no picture shows, so look-alike backs can be told apart — pass it in every grid. Shimmers while loading, lazy by default (`eager` for the hero), always 63:88 with card corners. `tier` adds a glow in the tier color (gold for treasure). Width comes from the parent |
+| `CardImage` | `image?; fallback?; photo?; alt; size?: 'thumb' \| 'full'; tier?; eager?; code?: { set; number }` | Tries TCGdex `${image}/low|high.webp` with CORS (cacheable by the service worker; a CORS failure is retried once as a plain image — every Japanese picture and a few English ones need that, so once a plain retry of an `assets.tcgdex.net/ja/` picture has loaded, later ones load plain from the start for the session: `cc:jaImgPlain`) → `fallback` (CardDetail.imageFallback) → `photo` (user data URL) → original card-back art. With `code`, the set code and number are printed on the card back whenever no picture shows, so look-alike backs can be told apart — pass it in every grid. Shimmers while loading, lazy by default (`eager` for the hero), always 63:88 with card corners. `tier` adds a glow in the tier color (gold for treasure). Width comes from the parent |
 | `TierBadge` | `tier: ValueTier; cheer?; size?: 'sm' \| 'md' \| 'lg'` | Emoji + price-band name: 🍃 동전 카드, ⭐ 과자값 카드, 💎 용돈 카드, 🔥 귀한 카드, 👑 보물 카드 (Pocket change, Snack money, Allowance, Prized, Treasure) — money words, never the rarity words printed on cards. `cheer` uses kind, upbeat copy, cheap cards included ("🍃 가격은 작아도 멋진 카드!", "👑 보물 카드예요! 소중히 보관해요!"). Treasure is a shimmering gold pill. Also exports `TIER_ORDER`, `TIER_EMOJI`, `TIER_LABELS` (use with `useStrings`) |
-| `ExternalLink` | `href; site: 'eBay' \| 'TCGplayer' \| 'Cardmarket'` + anchor props | The only way to link to a shop. Opens in a new tab after a one-time-per-session grown-up check (Sheet: "{site}는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"). Adds a screen-reader "(새 탭)". Put an `external-link` icon in the link and say near it that a website opens |
-| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (KRW by default in Korean) and live rates. `approx` adds a small "≈" (pass `summary.converted` / `item.priceApprox`). `secondary` adds the other currency underneath ("≈ $0.04"). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (length of the final amount, see below) |
+| `ExternalLink` | `href; site: 'eBay' \| 'TCGplayer' \| 'Cardmarket'` + button props | The only way to link to a shop. Renders a `<button type="button" role="link">` with no href (so a long-press can't open the shop past the check); style it with your own class as if it were a link — a zero-specificity reset removes the button look. Opens a new tab (`window.open(…, 'noopener')`, http/https only) after a one-time-per-session grown-up check (Sheet: "{site}는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"). Adds a screen-reader "(새 탭)". Put an `external-link` icon in it and say near it that a website opens |
+| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (KRW by default in Korean), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `summary.converted` / `item.priceApprox`) adds a small "약 " before Korean won (on the baseline) and a small "≈ " otherwise — never both. `secondary` adds the other currency underneath ("≈ $0.04" under won; "약 60원" / "≈ ₩60" under dollars). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
 | `SearchBar` | `onSubmit(q); value?; defaultValue?; onChange?; placeholder?; autoFocus?` | 58px pill with clear button; submits trimmed, non-empty text and closes the keyboard. Default placeholder "카드 이름이나 번호" |
 | `Sheet` | `open; onClose; title?; children` | Bottom sheet on native `<dialog>` (focus trap, inert page). Escape, backdrop tap and × call `onClose` |
 | `EmptyState` | `emoji; title; text?; action?` | Centered message for empty / not found / offline / error. `action` is usually one `.btn-primary .btn-lg .btn-block` |
@@ -140,7 +143,9 @@ All accept `className`. All built-in text is bilingual.
 | `cx(...classes)` | — | Joins truthy class names |
 
 ### Big amounts that must fit (`--money-chars`)
-Won amounts are long ("₩12,345,600"). Make the box a size container and let the font shrink with the amount:
+Won amounts are long ("₩12,345,600", "약 1억 2,000만 원"). `--money-chars` is the amount's width in 0.64em "characters"
+(`moneyChars`): figures, "₩", "$", "≈" and spaces count 1, a Hangul syllable ("원", "만", "약") 1.4. Make the box a size
+container and let the font shrink with the amount:
 
 ```css
 .home-mycards > .grow { container-type: inline-size; }
@@ -149,7 +154,9 @@ Won amounts are long ("₩12,345,600"). Make the box a size container and let th
   font-size: clamp(20px, 100cqi / (var(--money-chars, 8) * 0.64), 34px);    /* 0.64em per bold tabular char */
 }
 ```
-Used by the Home and My Cards totals, the best card price and the Card screen's big price (`.card-price` is the container).
+Used by the Home and My Cards totals, the best card price, the Card screen's big price (`.card-price` is the container),
+the eBay Buy It Now numbers (each `.card-ebay-stats` column is a container) and the Home "Recently viewed" tile prices
+(each tile is a container; an ellipsis is the last resort).
 
 ## Strings (i18n)
 
@@ -203,6 +210,9 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 | Scan tip | 아래쪽 작은 번호(084/187)를 읽어요. | We read the small number at the bottom, like 084/187. |
 | Scan title | 카드를 네모에 꽉 맞춰요 | Fit the card in the box |
 | OCR didn't load | 앗, 번호 읽기 도구를 못 불러왔어요 | Oops, the number reader didn't load |
+| OCR still downloading | 번호 읽기 도구를 아직 받고 있어요 · 조금 뒤에 다시 찍어 봐요 | The number reader is still loading · Try scanning again in a minute |
+| Approximate price | 약 4,760원 (Korean UI, won) | ≈ $3.50 / ≈ ₩4,760 |
+| Shipping | 배송비 1,700원 포함 · 무료 배송 · 배송비 별도 | incl. ₩1,700 shipping · Free shipping · + shipping |
 
 ## Motion & accessibility
 
@@ -210,8 +220,8 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
   tier gets a glow in its color.
   Global CSS shortens all animation under `prefers-reduced-motion`; don't add JS motion without checking it.
 - Icon-only buttons need `aria-label`. Toggle chips use `aria-pressed`. Use `<button>` for actions, `<Link>` for
-  navigation, `<ExternalLink site="eBay">` for eBay/TCGplayer (never a bare `target="_blank"` shop link: kids get
-  the grown-up check first). Docs links (GitHub guide) may stay plain `<a target="_blank" rel="noopener noreferrer">`.
+  navigation, `<ExternalLink site="eBay">` for eBay/TCGplayer (a button with `role="link"`; never a bare
+  `target="_blank"` shop link or `<a href>` to a shop: kids get the grown-up check first). Docs links (GitHub guide) may stay plain `<a target="_blank" rel="noopener noreferrer">`.
 - One `<h1>` per screen: TopBar's `title`, or the screen's own main heading when its TopBar has no title (Home's
   wordmark, the card name on the Card screen, the scan step titles). Sections use `<h2 className="h2">`.
 - Don't rely on color alone for up/down: pair with ▲/▼ or the trending icons.

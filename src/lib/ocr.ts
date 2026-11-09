@@ -43,12 +43,29 @@ export const CODE_PASSES: readonly CodePass[] = [
   { name: 'thr60', threshold: 60, psm: '11' },
 ];
 
+/**
+ * The passes for a low-resolution band (a live 1080p camera frame gives a ~400 px wide band: the number is ~14 px tall
+ * and soft, and the card's surroundings flatten the contrast). Lower thresholds in sparse-text mode read those best:
+ * over 112 test reads of fake-camera frames of a real card at 75–95% of the guide, this list voted 52 right and 5 wrong
+ * numbers, CODE_PASSES 38 right and 24 wrong (its thr70 and negate passes almost never read them right).
+ */
+export const LOW_RES_PASSES: readonly CodePass[] = [
+  { name: 'lo-thr50', threshold: 50, psm: '11' },
+  { name: 'lo-thr80', threshold: 80, psm: '11' },
+  { name: 'lo-thr60', threshold: 60, psm: '11' },
+  { name: 'lo-thr128', threshold: 128, psm: '11' },
+  { name: 'lo-thr100', threshold: 100, psm: '11' },
+  { name: 'lo-thr60-shear', threshold: 60, shear: 0.2, psm: '11' },
+];
+/** A band narrower than this many source px is read with LOW_RES_PASSES (photo crops give ~700 px). */
+const LOW_RES_BAND_PX = 520;
+
 const STRIP_WIDTH = 1400; // makes the code glyphs ~35–45 px tall
 const QUIET_ZONE = 24;
 // Tesseract takes literal characters, not ranges.
 const WHITELIST = '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-';
 
-/** Shared first step for every pass: grayscale + 1–99% contrast stretch of the upscaled code strip. */
+/** Shared first step for every pass: grayscale + 1–99% contrast stretch of the resampled code strip. */
 function prepareStrip(strip: Pixels): Pixels {
   return contrastStretch(grayscale(strip));
 }
@@ -65,19 +82,20 @@ function preparePass(strip: Pixels, pass: CodePass): Pixels {
 // ---------- worker lifecycle ----------
 
 /**
- * A load step (worker script, engine core, language data) that takes longer than this counts as stalled.
- * tesseract.js reports progress only between steps, so a slow but alive download gets this long per step.
+ * A scan waiting for the engine gives up after the engine has been silent this long (since the scan started waiting or
+ * the last load progress) and offers typing instead. The load itself goes on, and the next scan picks it up.
  */
-const LOAD_STALL_MS = 30_000;
+const WAIT_STALL_MS = 30_000;
+/**
+ * A load step (worker script, engine core, language data) silent this long counts as dead: the worker is terminated and
+ * forgotten, so the next scan starts a fresh download. tesseract.js reports progress only at the start and end of each
+ * download, so this has to cover the ~3 MB language file on a slow link (~200 kbps).
+ */
+const LOAD_STALL_MS = 150_000;
 /** One recognize call on a code strip takes well under a second on desktop and a few on old phones. */
 const PASS_TIMEOUT_MS = 20_000;
-/** How often a waiting scan checks whether it was stopped. */
-const STALE_POLL_MS = 150;
-/**
- * A scan stopped while the engine has been silent this long is taken as "it's stuck": the load is dropped so
- * the next scan starts a fresh one instead of queueing behind it until LOAD_STALL_MS.
- */
-const STOPPED_IDLE_MS = 3_000;
+/** How often a waiting scan checks whether it was stopped or has waited long enough. */
+const WAIT_POLL_MS = 150;
 
 /** tesseract.js load statuses → their share of the 'loading' stage (0..1). */
 const LOAD_STEPS: Record<string, readonly [number, number]> = {
@@ -89,7 +107,7 @@ const LOAD_STEPS: Record<string, readonly [number, number]> = {
 
 interface Engine {
   worker: Promise<TesseractWorker>;
-  /** true once the worker is ready, false when loading failed or stalled. Never rejects. */
+  /** true once the worker is ready, false when loading failed or was dead for LOAD_STALL_MS. Never rejects. */
   ready: Promise<boolean>;
   warm: boolean;
   /** Load progress 0..1 so far, and the scans waiting to hear about it. */
@@ -196,7 +214,16 @@ export function preloadOcr(): Promise<void> {
   return getEngine().ready.then(() => undefined);
 }
 
-/** The ready worker, or why there is none. A stopped scan stops waiting within STALE_POLL_MS. */
+/** True while the engine is still downloading (a scan that gave up on it can say "try again in a minute"). */
+export function ocrLoading(): boolean {
+  return !!engine && !engine.warm;
+}
+
+/**
+ * The ready worker, or why there is none: 'stopped' within WAIT_POLL_MS of isStale, 'unavailable' when loading failed
+ * or the engine stayed silent for WAIT_STALL_MS while this scan waited. Giving up never stops the load: a slow
+ * download finishes in the background for the next scan.
+ */
 async function waitForEngine(
   onProgress: ProgressFn | undefined,
   isStale: (() => boolean) | undefined,
@@ -206,16 +233,17 @@ async function waitForEngine(
   const report = (p: number) => onProgress?.('loading', p);
   report(e.progress);
   e.listeners.add(report);
+  const since = Date.now();
   let poll: ReturnType<typeof setInterval> | undefined;
   try {
-    const stopped = new Promise<'stopped'>((resolve) => {
-      if (isStale) poll = setInterval(() => isStale() && resolve('stopped'), STALE_POLL_MS);
+    const gaveUp = new Promise<'stopped' | 'unavailable'>((resolve) => {
+      poll = setInterval(() => {
+        if (isStale?.()) resolve('stopped');
+        else if (Date.now() - Math.max(since, e.lastProgressAt) >= WAIT_STALL_MS) resolve('unavailable');
+      }, WAIT_POLL_MS);
     });
-    const ok = await Promise.race([e.ready, stopped]);
-    if (ok === 'stopped') {
-      if (!e.warm && Date.now() - e.lastProgressAt >= STOPPED_IDLE_MS) e.kill();
-      return 'stopped';
-    }
+    const ok = await Promise.race([e.ready, gaveUp]);
+    if (typeof ok === 'string') return ok;
     if (!ok) return 'unavailable';
     report(1);
     return { e, worker: await e.worker };
@@ -256,7 +284,7 @@ export interface ReadCodeOptions {
   shouldStop?: (merged: ParsedCode, parsed: ParsedCode[]) => boolean | Promise<boolean>;
   /** True once nobody wants this result any more (the kid stopped): checked while waiting and before every pass. */
   isStale?: () => boolean;
-  /** Run at most this many of CODE_PASSES (the best ones), for cheap extra tries. */
+  /** Run at most this many passes (the best ones of CODE_PASSES, or LOW_RES_PASSES for a small band), for cheap extra tries. */
   maxPasses?: number;
   /** The part of the card to read, as fractions (default CODE_STRIP). */
   band?: Rect;
@@ -283,10 +311,12 @@ async function runPasses(
 ): Promise<CodeStripResult> {
   const passes: CodeStripPass[] = [];
   const parsedSoFar = () => passes.map((p) => p.parsed);
-  const todo = CODE_PASSES.slice(0, Math.max(1, maxPasses ?? CODE_PASSES.length));
   let status: CodeStripStatus = 'done';
   try {
-    const strip = prepareStrip(readStrip(card, band ?? CODE_STRIP));
+    const { px, sourceWidth } = readStrip(card, band ?? CODE_STRIP);
+    const strip = prepareStrip(px);
+    const list = sourceWidth < LOW_RES_BAND_PX ? LOW_RES_PASSES : CODE_PASSES;
+    const todo = list.slice(0, Math.max(1, maxPasses ?? list.length));
     onProgress?.('reading', 0);
     for (const pass of todo) {
       if (isStale?.()) {
@@ -312,13 +342,15 @@ async function runPasses(
   return { passes, merged: mergeParses(parsedSoFar()), status };
 }
 
-function readStrip(card: HTMLCanvasElement, band: Rect): Pixels {
+/** The band resampled to STRIP_WIDTH, and how many source px wide it was. */
+function readStrip(card: HTMLCanvasElement, band: Rect): { px: Pixels; sourceWidth: number } {
   const region = cropRegion(card, band.x, band.y, band.w, band.h);
+  const sourceWidth = region.width;
   const big = upscaleTo(region, STRIP_WIDTH);
   const px = readPixels(big);
   releaseCanvas(region);
   releaseCanvas(big);
-  return px;
+  return { px, sourceWidth };
 }
 
 /** Words whose box comes this close (px) to the band's top or bottom edge were cut by it. */

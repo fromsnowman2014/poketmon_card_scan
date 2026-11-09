@@ -4,6 +4,7 @@ import {
   bidsText,
   cardNames,
   printedNumberOf,
+  rangeMarker,
   rangePosition,
   rarityLabel,
   shippingNote,
@@ -11,6 +12,7 @@ import {
   timeLeft,
   trendOf,
   variantLabel,
+  withShipping,
 } from './format';
 
 describe('variantLabel', () => {
@@ -55,6 +57,27 @@ describe('rangePosition', () => {
 
   it('centers the dot when the range is empty', () => {
     expect(rangePosition(2, 2, 2)).toBe(0.5);
+  });
+});
+
+describe('rangeMarker', () => {
+  it('places the 시세 marker inside the bar', () => {
+    expect(rangeMarker(1, 3, 2)).toBe(0.5);
+    expect(rangeMarker(2459.5, 3741.1, 3170)).toBeCloseTo(0.555, 2);
+  });
+
+  it('draws no bar when 시세 equals an end or there is no spread', () => {
+    expect(rangeMarker(1.69, 5.8, 1.69)).toBeNull(); // 시세 = low (the injected card that pinned the dot left)
+    expect(rangeMarker(1, 5, 5)).toBeNull(); // 시세 = high
+    expect(rangeMarker(1, 101, 1.5)).toBeNull(); // 0.5% from the end reads as "at the end"
+    expect(rangeMarker(2, 2, 2)).toBeNull(); // low = 시세 = high
+    expect(rangeMarker(3, 2, 2.5)).toBeNull();
+    expect(rangeMarker(1, Number.NaN, 2)).toBeNull();
+  });
+
+  it('keeps the bar when 시세 is near, but not at, an end', () => {
+    expect(rangeMarker(1, 101, 5)).toBeCloseTo(0.04, 5);
+    expect(rangeMarker(1, 101, 97)).toBeCloseTo(0.96, 5);
   });
 });
 
@@ -170,6 +193,19 @@ describe('eBay counts', () => {
     expect(shippingNote(0, 'ko', usd)).toBe('무료 배송');
     expect(shippingNote(null, 'ko', usd)).toBe('배송비 별도');
     expect(shippingNote(undefined, 'en', usd)).toBe('+ shipping');
+  });
+
+  it('uses Korean won from the formatter it is given', () => {
+    expect(shippingNote(1.25, 'ko', () => '1,700원')).toBe('배송비 1,700원 포함');
+  });
+
+  it('adds known shipping to an auction bid, like the Buy It Now totals', () => {
+    expect(withShipping(3.5, 1.25)).toBe(4.75);
+    expect(withShipping(3.5, 0)).toBe(3.5); // free shipping
+    expect(withShipping(3.5, null)).toBe(3.5); // unknown: the note says "배송비 별도"
+    expect(withShipping(3.5, undefined)).toBe(3.5);
+    expect(withShipping(3.5, Number.NaN)).toBe(3.5);
+    expect(withShipping(3.5, -2)).toBe(3.5);
   });
 });
 

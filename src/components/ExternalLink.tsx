@@ -1,6 +1,7 @@
-import { useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import { useState, type ButtonHTMLAttributes, type MouseEvent } from 'react';
 import { useStrings, type Strings } from '../lib/i18n';
-import { confirmGrownUp, grownUpConfirmed } from './grownUpGate';
+import { cx } from './cx';
+import { confirmGrownUp, openShop, shopTap } from './grownUpGate';
 import { Icon } from './Icon';
 import { Sheet } from './Sheet';
 import './ExternalLink.css';
@@ -28,7 +29,8 @@ const STRINGS: Strings<'title' | 'body' | 'ok' | 'cancel' | 'newTab'> = {
   },
 };
 
-export interface ExternalLinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'href' | 'target' | 'rel'> {
+export interface ExternalLinkProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'type' | 'role'> {
+  /** The shop page (http/https only; anything else does nothing). */
   href: string;
   /** Named in the grown-up question ("eBay 웹사이트로 가요"). */
   site: ExternalSite;
@@ -37,30 +39,33 @@ export interface ExternalLinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorE
 /**
  * A link that leaves the app for a shop. The first tap in a session opens a sheet asking the kid to look
  * together with a grown-up; after "OK" every shop link opens directly (new tab) until the session ends.
+ *
+ * It is a <button role="link"> with no href, styled by its className like the link it replaces: an <a href>
+ * would let iOS long-press "Open in New Tab" (or a middle click) skip the question. Enter/Space and screen
+ * readers ("link, … (new tab)") still work as for a link.
  */
-export function ExternalLink({ href, site, onClick, children, ...rest }: ExternalLinkProps) {
+export function ExternalLink({ href, site, onClick, children, className, ...rest }: ExternalLinkProps) {
   const t = useStrings(STRINGS);
   const [asking, setAsking] = useState(false);
 
-  const click = (e: MouseEvent<HTMLAnchorElement>) => {
+  const click = (e: MouseEvent<HTMLButtonElement>) => {
     onClick?.(e);
-    if (e.defaultPrevented || grownUpConfirmed()) return; // the browser opens the new tab
-    e.preventDefault();
-    setAsking(true);
+    if (e.defaultPrevented) return;
+    shopTap(href, () => setAsking(true));
   };
 
   const proceed = () => {
     confirmGrownUp();
     setAsking(false);
-    window.open(href, '_blank', 'noopener');
+    openShop(href);
   };
 
   return (
     <>
-      <a {...rest} href={href} target="_blank" rel="noopener" onClick={click}>
+      <button {...rest} type="button" role="link" className={cx('ext-link', className)} onClick={click}>
         {children}
         <span className="sr-only">{t('newTab')}</span>
-      </a>
+      </button>
       <Sheet open={asking} onClose={() => setAsking(false)} title={t('title', { site })}>
         <div className="ext-gate stack-16">
           <span className="ext-gate-emoji" aria-hidden="true">

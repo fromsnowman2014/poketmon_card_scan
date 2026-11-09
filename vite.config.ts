@@ -45,7 +45,20 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         runtimeCaching: [
           {
-            // Card images rarely change: cache-first.
+            // Card images loaded without CORS: Japanese TCGdex images send their CORS headers twice, which browsers
+            // reject, so CardImage retries them as plain images. Those responses are opaque (status 0, and counted
+            // as several MB each against storage), so they get their own small cache and never evict the rest.
+            // Before the rule below: the first matching rule wins.
+            urlPattern: ({ url, request }) => url.origin === 'https://assets.tcgdex.net' && request.mode === 'no-cors',
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'card-images-opaque',
+              cacheableResponse: { statuses: [0] },
+              expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 30, purgeOnQuotaError: true },
+            },
+          },
+          {
+            // Card images rarely change: cache-first (CORS responses, status 200).
             urlPattern: /^https:\/\/assets\.tcgdex\.net\//,
             handler: 'CacheFirst',
             options: { cacheName: 'card-images', expiration: { maxEntries: 600, maxAgeSeconds: 60 * 60 * 24 * 30 } },

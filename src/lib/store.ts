@@ -294,10 +294,13 @@ export function updateCollectionPrice(key: string, priceUsd: number | null, appr
   );
 }
 
-/** Σ priceUsd × qty, rounded to cents; unpriced cards count as 0. */
+/**
+ * Σ priceUsd × qty; unpriced cards count as 0. Not rounded to cents (formatMoney rounds once, for display), only to
+ * 1/100 of a cent so float noise (0.1 × 3) doesn't make every snapshot look changed.
+ */
 export function collectionTotalUsd(items: readonly CollectionItem[]): number {
   const total = items.reduce((sum, i) => sum + (i.priceUsd ?? 0) * i.qty, 0);
-  return Math.round(total * 100) / 100;
+  return Math.round(total * 10_000) / 10_000;
 }
 
 // ---------- Collection thumbnails (user photos) ----------
