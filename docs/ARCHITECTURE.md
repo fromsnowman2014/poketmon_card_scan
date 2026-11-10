@@ -568,6 +568,9 @@ UI building blocks (components, CSS classes, copy tone): see [UI-KIT.md](UI-KIT.
 `vite-plugin-pwa` (generateSW, `registerType: 'prompt'`, `clientsClaim: true`): the app shell (JS, CSS, HTML, icons,
 manifest) is precached, so the installed app opens offline and shows My Cards. The base path comes from `BASE_PATH`
 (CI passes the GitHub Pages path; `/` for Cloudflare Pages), normalised by `normalizeBase` in vite.config.ts.
+vite.config.ts also allows `*.trycloudflare.com` hosts for `npm run dev` / `npm run preview` (`server` / `preview`
+`allowedHosts`), so an iPhone can open a local build over an HTTPS Cloudflare Quick Tunnel with the live camera
+([INSTALL.md](INSTALL.md) Part 3); other unknown hosts are still blocked.
 
 **Updates never reload the app while a kid is using it** (`src/main.tsx`): a new deploy downloads in the background
 and waits; it is applied (`updateSW(true)`) when the page goes hidden (Home button, app switcher), except within

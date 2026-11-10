@@ -12,8 +12,16 @@ function normalizeBase(raw: string | undefined): string {
 }
 const base = normalizeBase(process.env.BASE_PATH);
 
+// Lets an iPhone open the dev server (or `npm run preview`) through a free Cloudflare quick tunnel,
+// https://<random-words>.trycloudflare.com, because the iPhone camera only works over HTTPS (docs/INSTALL.md).
+// Vite blocks unknown host names by default against DNS rebinding; Cloudflare controls the DNS of these names, so a
+// web page can't point one at your computer, and allowing them keeps that protection.
+const tunnelHosts = ['.trycloudflare.com'];
+
 export default defineConfig({
   base,
+  server: { allowedHosts: tunnelHosts },
+  preview: { allowedHosts: tunnelHosts },
   plugins: [
     react(),
     VitePWA({

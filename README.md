@@ -6,7 +6,7 @@
 
 > 주소가 아직 안 열리면(404) 저장소 관리자가 **[처음 배포하기](#처음-배포하기-저장소-관리자용)** 를 한 번 해야 해요.
 
-[English below](#english)
+[English below](#english) · **설치 · 아이폰 개발 버전 설치 가이드 (영어, 쉬운 설명): [docs/INSTALL.md](docs/INSTALL.md)**
 
 ## 무엇을 하나요?
 
@@ -153,7 +153,9 @@ node worker/test.mjs   # eBay 워커 테스트 (인터넷 필요 없음)
 - 구조와 모듈 설명: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 기본 경로는 `/poketmon_card_scan/` 이에요. GitHub Actions 배포는 Pages 설정에서 경로를 자동으로 가져와 `BASE_PATH` 로 넘겨요.
   루트(`/`)에서 서비스하는 곳(Cloudflare Pages 등)은 `BASE_PATH=/ npm run build`.
-- 아이폰 카메라는 HTTPS(또는 localhost)에서만 켜져요. 폰에서 테스트할 땐 배포된 주소를 쓰는 게 가장 쉬워요.
+- 아이폰 카메라는 HTTPS(또는 localhost)에서만 켜져요. 내 컴퓨터에서 돌리는 개발 버전을 아이폰에서 카메라까지 쓰려면
+  무료 Cloudflare 터널(`cloudflared tunnel --url http://localhost:5173`)로 HTTPS 주소를 만들어요. 순서는
+  [docs/INSTALL.md](docs/INSTALL.md) Part 3에 있어요. (`*.trycloudflare.com` 주소는 vite.config.ts에서 이미 허용돼 있어요.)
 
 ## 데이터 출처 · 감사
 
@@ -177,6 +179,8 @@ Open **https://fromsnowman2014.github.io/poketmon_card_scan/**, take a photo of 
 total value. Free, no account, no ads; your collection stays on your phone. Japanese, Korean and English cards are supported, and OCR runs on-device.
 
 If the link still shows 404, the repo owner has to do the one-time [first deploy](#first-deploy-repo-owner) below.
+
+📘 **Step-by-step install guide** — run it on your computer and put a **dev version on your iPhone** (with the live camera): **[docs/INSTALL.md](docs/INSTALL.md)**
 
 **Install on iPhone:** open the link in **Safari** → **Share** → **Add to Home Screen** → **Add**. Launch it from the home-screen icon and allow the camera.
 
@@ -234,6 +238,7 @@ Pull requests run type-check, tests and build only. Local builds default to the 
 
 **Development** (Node 22 recommended, 20+ works): `npm i`, `npm run dev`, `npm test`, `npm run build`, `npm run names` (regenerate Pokémon names from PokeAPI),
 `npm run en-sets` (regenerate English set abbreviations from TCGdex), `node worker/test.mjs`. Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+To test your local version on an iPhone (the camera needs HTTPS), see [docs/INSTALL.md › Part 3](docs/INSTALL.md#part-3--put-a-dev-version-on-your-iphone).
 
 **Credits:** [TCGdex](https://tcgdex.dev) (cards, images, prices), [PokeAPI](https://pokeapi.co) (names),
 [Tesseract.js](https://tesseract.projectnaptha.com) (OCR), open.er-api.com and Frankfurter (exchange rates).
