@@ -86,11 +86,9 @@
 
 아이폰에서 앱 주소가 열리려면 **딱 한 번** 아래 순서대로 해 주세요. 컴퓨터 브라우저로 <https://github.com> 에 로그인해서 하면 되고, 프로그램 설치는 필요 없어요.
 
-**1단계 — 만든 내용을 `main` 브랜치에 합치기**
+**1단계 — 만든 내용을 `main` 브랜치에 합치기: 이미 끝났어요 ✅**
 
-1. 저장소 페이지 위쪽 **Pull requests** 탭 → **New pull request**.
-2. **base: `main`** ← **compare: `claude/happy-shannon-b3any5`** 를 고르고 **Create pull request** 를 두 번 눌러요.
-3. 자동 검사(초록 ✓)가 끝나면 **Merge pull request** → **Confirm merge**.
+앱 코드는 이미 `main` 에 들어 있어요. 2단계부터 하면 돼요.
 
 **2단계 — 무료로 인터넷에 올리기 (A, B 중 하나만)**
 
@@ -104,7 +102,7 @@ GitHub 무료 플랜에서는 **비공개(private) 저장소에 GitHub Pages를 
      (eBay 비밀 키는 저장소가 아니라 Cloudflare에만 넣어요.)
 2. **Settings → Pages** → **Build and deployment → Source: GitHub Actions** 를 골라요.
 3. **Actions** 탭 → 왼쪽 **Build & Deploy** → 오른쪽 **Run workflow** → 초록 **Run workflow** 버튼.
-   (1단계에서 합칠 때 자동으로 돌았던 실행은 Pages가 꺼져 있어서 배포를 건너뛰었어요. 그래서 한 번 다시 실행해요.)
+   (`main` 에 올라갈 때 자동으로 돌았던 실행은 Pages가 꺼져 있어서 배포를 건너뛰었어요. 그래서 한 번 다시 실행해요.)
 4. 2–3분 뒤 초록 ✓ 가 뜨면 완성! 👉 **https://fromsnowman2014.github.io/poketmon_card_scan/**
    - 주소 모양: `https://<GitHub 사용자 이름>.github.io/<저장소 이름>/`
    - 이후에는 `main` 이 바뀔 때마다 자동으로 테스트 → 빌드 → 배포돼요. 저장소 이름을 바꾸거나 개인 도메인을 붙여도 설정은 그대로 두면 돼요.
@@ -211,14 +209,13 @@ Buy It Now prices and current auction bids there include shipping to the kid's c
 
 Do this once, in a browser signed in to <https://github.com>; nothing to install.
 
-1. **Merge the work into `main`:** **Pull requests → New pull request**, base **`main`** ← compare **`claude/happy-shannon-b3any5`**,
-   **Create pull request** (twice), wait for the green check, then **Merge pull request → Confirm merge**.
+1. **Merge the work into `main`: already done ✅** The app's code is in `main`, so start at step 2.
 2. **Publish it for free — pick one.** On GitHub's Free plan, **GitHub Pages does not work for private repos** (GitHub Pro and other paid plans allow it; then start at A2).
    - **A. Make the repo public and use GitHub Pages (recommended).**
      1. **Settings → General → Danger Zone → Change visibility → Change to public.** Free Pages requires a public repo. The repo contains
         no passwords or secret keys, and the app is a public web page anyway (the eBay secret lives only in Cloudflare).
      2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-     3. **Actions → Build & Deploy → Run workflow.** The run started by the merge skipped the deploy because Pages was still off.
+     3. **Actions → Build & Deploy → Run workflow.** The run started when the code reached `main` skipped the deploy because Pages was still off.
      4. After the green check (2–3 min) the app is live at **https://fromsnowman2014.github.io/poketmon_card_scan/**
         (pattern: `https://<github-user>.github.io/<repo-name>/`). Every later change to `main` is tested, built and deployed automatically;
         the base path is read from the Pages settings, so renaming the repo or adding a custom domain needs no change.
