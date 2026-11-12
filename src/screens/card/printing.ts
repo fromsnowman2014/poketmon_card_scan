@@ -1,9 +1,9 @@
 // Pure helpers for a card's printings: which one the screen opens on, how the picker lays them out, what the price
 // panel has to say about one, and what the "how to tell" sheet draws. Kept apart from React so they are unit-tested.
 import type { CardDetail, CardVariant } from '../../lib/types';
-import { foilOf, plainMirrorIsPokeBall, type VariantLabelContext } from './format';
+import { patternOfKey, plainMirrorIsPokeBall, type VariantLabelContext } from './format';
 
-type Printing = Pick<CardVariant, 'key' | 'type' | 'foil' | 'stamp' | 'subtype' | 'size' | 'summary'>;
+type Printing = Pick<CardVariant, 'key' | 'type' | 'foil' | 'pattern' | 'stamp' | 'subtype' | 'size' | 'summary'>;
 
 /**
  * The printing the Card screen opens on: the one asked for (`?v=`, from My Cards and Recent) when the card has it,
@@ -89,10 +89,13 @@ const isFirstEdition = (v: Printing) => !!v.stamp?.some((s) => s === '1st-editio
 const otherStamps = (v: Printing) => (v.stamp ?? []).filter((s) => s !== '1st-edition' && s !== '1st edition');
 const isBall = (foil: string | undefined) => !!foil && foil.endsWith('ball');
 
-/** The pattern a printing shows: its own foil, or Poké Ball for the plain mirror of a card that works that way. */
+/**
+ * The pattern a printing shows: its own foil, the one the price data names for it, or Poké Ball for the plain mirror
+ * of a card that works that way.
+ */
 function patternOf(v: Printing, ctx: VariantLabelContext): string | undefined {
   if (v.type !== 'reverse') return undefined;
-  return v.foil ?? (plainMirrorIsPokeBall(ctx) ? 'pokeball' : undefined);
+  return v.foil ?? v.pattern ?? (plainMirrorIsPokeBall(ctx) ? 'pokeball' : undefined);
 }
 
 const MARKS: Record<string, PatternArt['mark']> = { masterball: 'master', energy: 'energy', 'team-rocket': 'rocket' };
@@ -121,7 +124,7 @@ export function howToTell(v: Printing, ctx: VariantLabelContext = {}): HowKey | 
   if (v.type === 'holo') return 'holo';
   if (v.type !== 'normal') return null;
   // "No ball pattern" only where a sibling has one.
-  const balls = plainMirrorIsPokeBall(ctx) || (ctx.siblings ?? []).some((key) => isBall(foilOf(key)));
+  const balls = plainMirrorIsPokeBall(ctx) || (ctx.siblings ?? []).some((key) => isBall(patternOfKey(key, ctx)));
   return balls ? 'normalNoBall' : 'normal';
 }
 

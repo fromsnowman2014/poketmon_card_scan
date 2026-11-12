@@ -315,13 +315,20 @@ function toDraft(v: RawVariant, top: Obj): Draft {
   return { v, pricing, cardmarket: pickCardmarket(v, pricing.cardmarket), mixed: borrowed && isPlainReverse(v) };
 }
 
-const toJaRef = ({ v, cardmarket, mixed }: Draft): JaVariantRef => ({
-  type: v.type,
-  ...(v.foil ? { foil: v.foil } : {}),
-  firstEdition: isFirstEdition(v),
-  tcgplayerId: price(v.thirdParty.tcgplayer) ?? undefined,
-  ownCardmarket: !mixed && cardmarket !== null && cardmarketMarket(cardmarket) !== null,
-});
+function toJaRef({ v, cardmarket, mixed }: Draft, rates: Rates): JaVariantRef {
+  const own = !mixed && cardmarket !== null ? cardmarketMarket(cardmarket) : null;
+  return {
+    type: v.type,
+    ...(v.foil ? { foil: v.foil } : {}),
+    firstEdition: isFirstEdition(v),
+    tcgplayerId: price(v.thirdParty.tcgplayer) ?? undefined,
+    ownCardmarket: own !== null,
+    ...(own !== null ? { cardmarketUsd: eurToUsd(own, rates) } : {}),
+  };
+}
+
+/** Kinds a plain mirror can turn out to be that are not the plain mirror itself (M2a: "Team Rocket Pattern"). */
+const isPatternKind = (kind: string) => kind !== 'base' && kind !== 'reverse';
 
 function toVariant({ v, pricing, cardmarket: ownOrBorrowed, mixed }: Draft, rates: Rates, taken: Set<string>, match: JaMatch | null): CardVariant {
   const tp = match ? { price: match.price, productId: match.productId } : pickTcgplayer(v, pricing.tcgplayer);
@@ -335,6 +342,9 @@ function toVariant({ v, pricing, cardmarket: ownOrBorrowed, mixed }: Draft, rate
     key: uniqueKey(v, taken),
     type: v.type,
     ...(v.foil ? { foil: v.foil } : {}),
+    // TCGdex lists a plain mirror, the product it matched names its pattern: the name, not the key (keys must not
+    // depend on whether today's price file loaded).
+    ...(match && isPlainReverse(v) && isPatternKind(match.kind) ? { pattern: match.kind } : {}),
     ...(v.stamp?.length ? { stamp: v.stamp } : {}),
     ...(v.subtype ? { subtype: v.subtype } : {}),
     ...(isOversize(v) ? { size: v.size } : {}),
@@ -362,7 +372,7 @@ export function buildVariants(raw: unknown, rates: Rates, ja?: JaSetFile | null)
   const taken = new Set<string>();
   const drafts = rawVariants(card, top).map((v) => toDraft(v, top));
   const localId = typeof card.localId === 'number' ? String(card.localId) : (asStr(card.localId) ?? '');
-  const matches = ja ? matchJaVariants(localId, drafts.map(toJaRef), ja) : [];
+  const matches = ja ? matchJaVariants(localId, drafts.map((d) => toJaRef(d, rates)), ja) : [];
   const variants = drafts
     .map((draft, i) => ({ variant: toVariant(draft, rates, taken, matches[i] ?? null), rank: commonness(draft.v) }))
     .sort((a, b) => a.rank - b.rank) // stable: API order among equals

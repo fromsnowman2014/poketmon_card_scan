@@ -134,6 +134,16 @@ describe('howToTell', () => {
     expect(howToTell(v('holo', 1), { cardLang: 'ja', siblings: ['holo', 'reverse-pokeball', 'reverse-masterball'] })).toBe('holo');
   });
 
+  it('uses the pattern the price data names for a plain mirror (M2a)', () => {
+    const ctx = { cardLang: 'ja', siblings: ['normal', 'reverse-energy', 'reverse'], patterns: { reverse: 'team-rocket' } } as const;
+    expect(howToTell(v('reverse', 1, { pattern: 'team-rocket' }), ctx)).toBe('rocket');
+    expect(patternArt(v('reverse', 1, { pattern: 'team-rocket' }), ctx).mark).toBe('rocket');
+    expect(howToTell(v('reverse', 1, { pattern: 'friendball' }), { cardLang: 'ja' })).toBe('ball');
+    // The normal card of such a set: "no ball pattern" only when a sibling has a ball.
+    expect(howToTell(v('normal', 1), ctx)).toBe('normal');
+    expect(howToTell(v('normal', 1), { ...ctx, patterns: { reverse: 'duskball' } })).toBe('normalNoBall');
+  });
+
   it('keeps it plain where no ball pattern is around', () => {
     const en = { cardLang: 'en', siblings: ['normal', 'reverse'] } as const;
     expect(howToTell(v('normal', 1), en)).toBe('normal');

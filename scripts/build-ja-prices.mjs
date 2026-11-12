@@ -216,6 +216,12 @@ function buildGroup(group, priceRows, catalog, previous, numbersKnown) {
     rows++;
     if (prices[0] !== null) withMarket++;
   }
+  // Cards without a price today stay in, with their number and no rows: the app must see that a number is shared
+  // ("057/SV-P" is both Penny and Taipei's Pikachu) before it gives the only priced product to a card.
+  const known = catalog ? [...catalog.cards] : Object.entries(previous?.p ?? {}).map(([id, p]) => [Number(id), p]);
+  for (const [id, [number, tags]] of known) {
+    if (number && !products[id] && !sealed.has(id)) products[id] = [number, tags, {}];
+  }
   return {
     stats: { rows, withMarket, dropped: sealed.size },
     group: {
@@ -264,7 +270,8 @@ async function buildSnapshot(source, previous) {
     const before = previousById.get(group.groupId);
     // Product lists (card numbers) rarely change: read one again only for a new or changed group, or an unknown product.
     const knownBefore = (r) => before.p[r.productId] || before.x?.includes(r.productId) || [r.marketPrice, r.lowPrice, r.midPrice, r.highPrice].every((x) => money(x) === null);
-    const reusable = before?.c === 1 && before.m === String(group.modifiedOn ?? '') && priceRows.every(knownBefore) && !flag('all-products');
+    // Snapshots from before cards without prices were kept (no `unpriced` mark) read every product list once again.
+    const reusable = previous?.unpriced === 1 && before?.c === 1 && before.m === String(group.modifiedOn ?? '') && priceRows.every(knownBefore) && !flag('all-products');
     let catalog = null;
     if (!reusable && priceRows.length && Date.now() - startedAt >= LISTS_BUDGET_MS) total.listsLeft++;
     else if (!reusable && priceRows.length) {
@@ -289,15 +296,19 @@ async function buildSnapshot(source, previous) {
   if (total.withMarket < total.rows * MIN_MARKET_SHARE) throw new Error(`only ${total.withMarket} of ${total.rows} rows have a market price`);
 
   // No clock time of our own in the files: the same input gives the same bytes, so an unchanged day changes nothing.
-  return { status: 'new', snapshot: { v: FORMAT, d: d ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'), groups: out }, total };
+  // unpriced: 1 = groups list their cards without a price too (buildGroup).
+  return { status: 'new', snapshot: { v: FORMAT, d: d ?? new Date().toISOString().replace(/\.\d+Z$/, 'Z'), unpriced: 1, groups: out }, total };
 }
 
 // ---------- writing ----------
 
+/** A group with at least one price row (products without a price only name their number). */
+const hasPrices = (g) => Object.values(g.p).some((p) => Object.keys(p[2]).length > 0);
+
 function filesOf(snapshot) {
   const byKey = new Map();
   for (const g of snapshot.groups) {
-    if (!Object.keys(g.p).length) continue;
+    if (!hasPrices(g)) continue;
     const key = setKey(g.a) || `g${g.id}`;
     (byKey.get(key) ?? byKey.set(key, []).get(key)).push(g);
   }
@@ -305,7 +316,7 @@ function filesOf(snapshot) {
   const files = new Map();
   const keys = [...byKey.keys()].sort();
   const owner = new Map();
-  const counts = { groups: snapshot.groups.length, files: keys.length, products: 0, rows: 0, withMarket: 0, withNumber: 0 };
+  const counts = { groups: snapshot.groups.length, files: keys.length, products: 0, rows: 0, withMarket: 0, withNumber: 0, unpriced: 0 };
   const sizes = {};
   keys.forEach((key, i) => {
     const groups = byKey.get(key);
@@ -314,6 +325,10 @@ function filesOf(snapshot) {
     for (const g of groups)
       for (const [id, p] of Object.entries(g.p)) {
         owner.set(Number(id), i);
+        if (!Object.keys(p[2]).length) {
+          counts.unpriced++;
+          continue;
+        }
         products++;
         if (p[0]) counts.withNumber++;
         for (const row of Object.values(p[2])) {
@@ -339,7 +354,7 @@ function filesOf(snapshot) {
   }
   const aliases = [];
   for (const [key, ids] of Object.entries(SET_ALIASES)) {
-    const groups = snapshot.groups.filter((g) => ids.includes(g.id) && Object.keys(g.p).length);
+    const groups = snapshot.groups.filter((g) => ids.includes(g.id) && hasPrices(g));
     if (byKey.has(key) || !groups.length) continue;
     files.set(`s/${key}.json`, fileBody(key, groups));
     aliases.push(key);

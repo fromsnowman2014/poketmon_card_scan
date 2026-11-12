@@ -82,6 +82,19 @@ export interface VariantLabelContext {
   cardLang?: CardLang;
   /** Keys of all the card's printings (this one may be among them). */
   siblings?: readonly string[];
+  /** Key → pattern of a plain mirror the price data names (CardVariant.pattern), e.g. { reverse: 'team-rocket' }. */
+  patterns?: Readonly<Record<string, string>>;
+}
+
+/** The mirror pattern of a printing: in its key, or named by the price data (VariantLabelContext.patterns). */
+export function patternOfKey(key: string, ctx: VariantLabelContext = {}): string | undefined {
+  return foilOf(key) ?? (Object.prototype.hasOwnProperty.call(ctx.patterns ?? {}, key) ? ctx.patterns?.[key] : undefined);
+}
+
+/** The label context of a card: its language, its printings and the patterns the price data names. */
+export function labelContext(cardLang: CardLang, variants: readonly { key: string; pattern?: string }[]): VariantLabelContext {
+  const named = variants.filter((v) => v.pattern).map((v) => [v.key, v.pattern as string] as const);
+  return { cardLang, siblings: variants.map((v) => v.key), ...(named.length ? { patterns: Object.fromEntries(named) } : {}) };
 }
 
 /** The mirror pattern in a key: "reverse-masterball-2" → "masterball", "reverse-heavyball" → "heavyball"; else undefined. */
@@ -101,14 +114,22 @@ export function foilName(foil: string, lang: UiLang): string {
  * (Master Ball, energy, Love Ball…) and no printing named Poké Ball. In those sets (SV8a, M2a) shops sell the plain
  * mirror as "Poké Ball pattern"; elsewhere it is just the mirror.
  */
-export function plainMirrorIsPokeBall({ cardLang, siblings = [] }: VariantLabelContext = {}): boolean {
+export function plainMirrorIsPokeBall(ctx: VariantLabelContext = {}): boolean {
+  const { cardLang, siblings = [] } = ctx;
   if (cardLang !== 'ja' && cardLang !== 'ko') return false;
-  const foils = siblings.map(foilOf);
-  return foils.some((f) => f !== undefined && f !== 'pokeball') && !foils.includes('pokeball');
+  const foils = siblings.map((key) => patternOfKey(key, ctx));
+  // The price data already names the plain mirror's pattern (M2a-034: Team Rocket): nothing to assume.
+  const named = siblings.some((key) => !foilOf(key) && patternOfKey(key, ctx) !== undefined);
+  return !named && foils.some((f) => f !== undefined && f !== 'pokeball') && !foils.includes('pokeball');
 }
 
-/** A plain `reverse`: "Reverse Holo" on English cards (and when the language is unknown), a mirror on JA/KO ones. */
-function reverseName(lang: UiLang, short: boolean, ctx: VariantLabelContext): string {
+/**
+ * A plain `reverse`: "Reverse Holo" on English cards (and when the language is unknown), a mirror on JA/KO ones, or
+ * the pattern the price data names for it.
+ */
+function reverseName(key: string, lang: UiLang, short: boolean, ctx: VariantLabelContext): string {
+  const named = ctx.patterns?.[key];
+  if (named && Object.prototype.hasOwnProperty.call(ctx.patterns, key)) return patternName(named, lang, short);
   if (ctx.cardLang !== 'ja' && ctx.cardLang !== 'ko') return BASE_LABELS[lang].reverse;
   return plainMirrorIsPokeBall(ctx) ? patternName('pokeball', lang, short) : MIRROR[lang].alone;
 }
@@ -126,7 +147,7 @@ function label(key: string, lang: UiLang, short: boolean, ctx: VariantLabelConte
         .filter((k) => key === k || key.startsWith(`${k}-`))
         .sort((a, b) => b.length - a.length)[0];
   if (!base) return detailLabel(key, lang);
-  const name = foil ? patternName(foil, lang, short) : base === 'reverse' ? reverseName(lang, short, ctx) : BASE_LABELS[lang][base];
+  const name = foil ? patternName(foil, lang, short) : base === 'reverse' ? reverseName(key, lang, short, ctx) : BASE_LABELS[lang][base];
   return key === base ? name : `${name} · ${detailLabel(key.slice(base.length + 1), lang)}`;
 }
 

@@ -38,9 +38,9 @@ describe('matchJaVariants — which product', () => {
 
   it('a. TCGdex\'s product id, one entry per variant in the same order', () => {
     expect(matchJaVariants('084', three, hawlucha)).toEqual([
-      { productId: 602464, price: { low: 0.01, mid: 0.17, high: 1, market: 0.18, directLow: null }, updated: D },
-      { productId: 604564, price: { low: 2.27, mid: 3.15, high: 7, market: 2.27, directLow: null }, updated: D },
-      { productId: 602465, price: { low: 0.34, mid: 0.63, high: 1.84, market: 0.6, directLow: null }, updated: D },
+      { productId: 602464, price: { low: 0.01, mid: 0.17, high: 1, market: 0.18, directLow: null }, updated: D, kind: 'base' },
+      { productId: 604564, price: { low: 2.27, mid: 3.15, high: 7, market: 2.27, directLow: null }, updated: D, kind: 'masterball' },
+      { productId: 602465, price: { low: 0.34, mid: 0.63, high: 1.84, market: 0.6, directLow: null }, updated: D, kind: 'reverse' },
     ]);
   });
 
@@ -115,12 +115,35 @@ describe('matchJaVariants — which product', () => {
     });
     const variants = [ref(), ref({ type: 'reverse', foil: 'energy' }), ref({ type: 'reverse' })];
     expect(ids(matchJaVariants('001', variants, m2a))).toEqual([665672, 666088, 665922]);
+    // The match says which pattern it is, so the screen can name it (M2a-034: a Team Rocket one).
+    expect(matchJaVariants('001', variants, m2a).map((m) => m?.kind)).toEqual(['base', 'energy', 'pokeball']);
+    const rocket = file({ '1': ['034/193', '', { normal: [0.15, 0.1, 0.2, 1] }], '2': ['034/193', 'Team Rocket Pattern', holo(2.21)] });
+    expect(matchJaVariants('034', [ref(), ref({ type: 'reverse' })], rocket)[1]?.kind).toBe('team-rocket');
+    // A Mirror Foil product in the file, even one without a price (the build keeps those), is the plain mirror:
+    // no price for it today, and the Poké Ball product is not taken instead.
+    const unpricedMirror = file({ ...m2a.g[0].p, '9': ['001/193', 'Mirror Foil', {}] });
+    expect(ids(matchJaVariants('001', [ref(), ref({ type: 'reverse', foil: 'energy' }), ref({ type: 'reverse' })], unpricedMirror))).toEqual([665672, 666088, null]);
     // Two products left: no guess.
     expect(ids(matchJaVariants('001', [ref(), ref({ type: 'reverse' })], m2a))).toEqual([665672, null]);
     // Only a plain mirror may take a leftover: a Master Ball variant never gets another pattern's price.
     expect(ids(matchJaVariants('001', [ref(), ref({ type: 'reverse', foil: 'energy' }), ref({ type: 'reverse', foil: 'masterball' })], m2a))).toEqual([665672, 666088, null]);
     // The leftover is never the base card.
     expect(ids(matchJaVariants('001', [ref({ type: 'reverse' })], file({ '665672': ['001/193', '', { normal: [0.1, 0.02, 0.15, 1] }] })))).toEqual([null]);
+  });
+
+  it('ignores a market price that is an old sale: every listing and the Cardmarket price on the other side', () => {
+    // S5I-085: market $4.99, listed $275–$320, Cardmarket ≈ $104 → the card keeps its Cardmarket price.
+    const s5i = file({ '569034': ['085/070', '', holo(4.99, 275, 297.5, 320)] });
+    expect(ids(matchJaVariants('085', [ref({ tcgplayerId: 569034, ownCardmarket: true, cardmarketUsd: 104.63 })], s5i))).toEqual([null]);
+    // The other way round: sold at $4.95, the only listings well under it, Cardmarket $0.54.
+    const high = file({ '1': ['006/050', '', holo(4.95, 1.2, 1.4, 1.5)] });
+    expect(ids(matchJaVariants('006', [ref({ tcgplayerId: 1, ownCardmarket: true, cardmarketUsd: 0.54 })], high))).toEqual([null]);
+    // One signal alone is not enough: no Cardmarket price, or Cardmarket agreeing with the market price.
+    expect(ids(matchJaVariants('085', [ref({ tcgplayerId: 569034 })], s5i))).toEqual([569034]);
+    expect(ids(matchJaVariants('085', [ref({ tcgplayerId: 569034, ownCardmarket: true, cardmarketUsd: 6 })], s5i))).toEqual([569034]);
+    // Listings within 3× of the market price: a normal spread, kept.
+    const normal = file({ '1': ['010/100', '', holo(10, 25, 30, 40)] });
+    expect(ids(matchJaVariants('010', [ref({ tcgplayerId: 1, ownCardmarket: true, cardmarketUsd: 40 })], normal))).toEqual([1]);
   });
 
   it('never gives one product to two variants', () => {

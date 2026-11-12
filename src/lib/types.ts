@@ -103,6 +103,11 @@ export interface CardVariant {
   type: string;
   /** Optional foil sub-type, e.g. "masterball", "pokeball". */
   foil?: string;
+  /**
+   * The pattern of a plain mirror TCGdex doesn't name, from the TCGplayer product it matched (M2a: "team-rocket",
+   * "friendball"). Only the name changes: the key stays "reverse".
+   */
+  pattern?: string;
   /** Stamps printed on this variant as TCGdex names them, e.g. ["1st-edition"], ["gamestop"], ["pre-release"]. */
   stamp?: string[];
   /** TCGdex printing sub-type, e.g. "shadowless", "1999-2000-copyright" ("unlimited" is the regular printing). */

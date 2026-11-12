@@ -271,6 +271,31 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
     });
   });
 
+  describe('getCard after a price file failed once', () => {
+    beforeEach(() => vi.stubGlobal('location', { href: 'https://kid.example/poketmon_card_scan/' }));
+
+    it('asks for the file again when the same card opens again, instead of keeping Cardmarket prices for 30 minutes', async () => {
+      const file: JaSetFile = { v: 1, d: new Date(Date.now() - 3_600_000).toISOString(), k: 'sv8a', g: jaCases['SV8a-084'].groups as unknown as JaGroup[] };
+      let fail = true;
+      const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'https://kid.example');
+        if (/\/data\/tcgplayer-ja\/s\/sv8a\.json$/.test(url.pathname)) {
+          if (fail) throw new TypeError('Failed to fetch');
+          return new Response(JSON.stringify(file), { status: 200 });
+        }
+        const out = tcgdexHandler(url, typeof init?.body === 'string' ? init.body : undefined);
+        return out === undefined ? new Response('{}', { status: 404 }) : new Response(JSON.stringify(out), { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchFn);
+      const sources = (c: CardDetail) => c.variants.map((v) => v.summary?.source ?? null);
+      expect(sources(await getCard('ja', 'SV8a-084'))).toEqual(['cardmarket', 'cardmarket', null]);
+      fail = false;
+      expect(sources(await getCard('ja', 'SV8a-084'))).toEqual(['tcgplayer', 'tcgplayer', 'tcgplayer']);
+      // The card itself came from the cache: TCGdex was asked once.
+      expect(calledUrls(fetchFn).filter((u) => u.includes('/cards/SV8a-084'))).toHaveLength(1);
+    });
+  });
+
   describe('resolveSets', () => {
     it('matches a JA code to its set id when the total agrees', async () => {
       const r = await resolveSets({ setCode: 'sv8a', number: '084', total: '187', lang: 'ja' }, ['ja']);

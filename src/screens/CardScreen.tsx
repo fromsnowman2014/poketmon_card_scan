@@ -19,7 +19,7 @@ import type { CardDetail, CardLang, CardVariant, ValueTier } from '../lib/types'
 import { CardSkeleton } from './card/CardSkeleton';
 import { CollectButton } from './card/CollectButton';
 import { EBAY_PANEL_ID, EbayPanel } from './card/EbayPanel';
-import { cardNames, printedNumberOf, rarityLabel, speciesIds, variantLabel, type VariantLabelContext } from './card/format';
+import { cardNames, labelContext, printedNumberOf, rarityLabel, speciesIds, variantLabel, type VariantLabelContext } from './card/format';
 import { MorePrices } from './card/MorePrices';
 import { FOLD_ATTR, PriceHero } from './card/PriceHero';
 import { hasShinyUpgrade, isMixedMirror, isRarePattern, startVariant } from './card/printing';
@@ -239,10 +239,7 @@ function CardResult({ card: fetched, lang, photo, fromScan, wanted }: CardResult
     [card, lang, variant.key],
   );
   const several = card.variants.length > 1;
-  const labels = useMemo<VariantLabelContext>(
-    () => ({ cardLang: lang, siblings: card.variants.map((v) => v.key) }),
-    [card, lang],
-  );
+  const labels = useMemo<VariantLabelContext>(() => labelContext(lang, card.variants), [card, lang]);
   const variantName = several ? variantLabel(variant.key, uiLang, labels) : undefined;
   // A Korean card shows the Japanese card's price: never as an exact number.
   const korean = lang === 'ko';

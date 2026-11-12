@@ -65,6 +65,8 @@ assert.deepEqual(sv8a, {
       c: 1,
       p: {
         602319: ['001/187', '', { normal: [0.13, 0.01, 0.15, 1.99] }],
+        // A card without a price today keeps its number: the app must see that 001/187 is two products.
+        602320: ['001/187', 'Mirror Foil', {}],
         // The user's card, Hawlucha 084/187: normal, the plain mirror and the Master Ball mirror are three products.
         602464: ['084/187', '', { normal: [0.18, 0.01, 0.17, 1], holofoil: [0.17, 0.01, 0.2, 0.99] }],
         602465: ['084/187', 'Mirror Foil', { holofoil: [0.6, 0.34, 0.63, 1.84] }],
@@ -111,7 +113,8 @@ assert.deepEqual(numberAndTag(602262), ['', ''], 'no product list for this group
 
 const index = json('a', 'index.json');
 assert.deepEqual(Object.keys(index), ['v', 'd', 'source', 'counts', 'keys', 'sizes', 'aliases', 'route']);
-assert.deepEqual(index.counts, { groups: 13, files: 14, products: 29, rows: 33, withMarket: 25, withNumber: 16 });
+assert.deepEqual(index.counts, { groups: 13, files: 14, products: 29, rows: 33, withMarket: 25, withNumber: 16, unpriced: 1 });
+assert.equal(json('a', 'all.json').unpriced, 1, 'marks a snapshot that lists cards without a price');
 assert.deepEqual(index.keys, ['bw8', 'g23721', 'g23731', 'g23740', 'g24567', 'l1-hg', 'm-p', 'm2a', 'sm1p', 'sv2a', 'sv4a', 'sv8a']);
 assert.deepEqual(index.sizes, [6, 2, 2, 1, 3, 1, 1, 4, 2, 2, 1, 4]);
 assert.deepEqual(index.aliases, ['bw8a', 'pmcg1']);
@@ -152,6 +155,20 @@ r = await run(['--prev', at('nothing-here'), '--prev-only', '--out', at('b2')]);
 assert.match(r.log, /nothing to copy/);
 assert.match(r.log, /status none; 0 requests/);
 assert.deepEqual(tree(at('b2')), tree(at('a')));
+
+// A previous snapshot from before cards without a price were kept reads every product list once more; a marked one doesn't.
+const unmarked = json('a', 'all.json');
+delete unmarked.unpriced;
+for (const g of unmarked.groups) for (const [id, p] of Object.entries(g.p)) if (!Object.keys(p[2]).length) delete g.p[id];
+mkdirSync(at('old'));
+writeFileSync(at('old', 'all.json'), JSON.stringify(unmarked));
+r = await run(['--from', variant('next-day'), '--prev', at('old'), '--out', at('b3')]);
+assert.match(r.log, /status new/);
+assert.match(r.log, /"productLists":7/, "every group with a product list");
+assert.deepEqual(json('b3', 's', 'sv8a.json').g[0].p[602320], ['001/187', 'Mirror Foil', {}]);
+r = await run(['--from', variant('next-day-2'), '--prev', at('a'), '--out', at('b4')]);
+assert.match(r.log, /"productLists":0/);
+assert.deepEqual(json('b4', 's', 'sv8a.json').g[0].p[602320], ['001/187', 'Mirror Foil', {}], 'kept from the previous snapshot');
 
 // ---------- 4. tcgcsv is broken: yesterday's files are restored from --prev, and the script still exits 0 ----------
 
@@ -237,7 +254,7 @@ assert.ok(!('603428' in waiting.p));
 r = await run(['--from', fixtures, '--out', at('s1')], { JA_PRICES_LISTS_MS: '0' });
 assert.match(r.log, /status new/);
 assert.match(r.log, /"productLists":0,"listsLeft":13/);
-assert.deepEqual(json('s1', 'index.json').counts, { ...index.counts, products: 30, rows: 34, withMarket: 26, withNumber: 0 }, 'with no list read, the booster box counts as a product');
+assert.deepEqual(json('s1', 'index.json').counts, { ...index.counts, products: 30, rows: 34, withMarket: 26, withNumber: 0, unpriced: 0 }, 'with no list read, the booster box counts as a product');
 assert.deepEqual(json('s1', 's', 'sv8a.json').g[0].p[604564], ['', '', { holofoil: [2.27, 2.27, 3.15, 7] }]);
 r = await run(['--from', variant('day2-lists', { edit: { '23909.prices.json': cheaper } }), '--prev', at('s1'), '--out', at('s2')]);
 assert.match(r.log, /"productLists":7,"listsLeft":0/);

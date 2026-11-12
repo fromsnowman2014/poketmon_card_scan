@@ -100,6 +100,8 @@ export interface JaVariantRef {
   tcgplayerId?: number;
   /** The variant has its OWN Cardmarket price (not the card-level block a plain mirror borrows). */
   ownCardmarket: boolean;
+  /** That price in dollars, when it has one. */
+  cardmarketUsd?: number;
 }
 
 export interface JaMatch {
@@ -107,6 +109,8 @@ export interface JaMatch {
   price: TcgplayerPrice;
   /** The file's `d`. */
   updated: string;
+  /** The printing the product is, from its name: 'base', 'reverse' (plain mirror), 'masterball', 'team-rocket'… */
+  kind: string;
 }
 
 const BASE = 'base';
@@ -196,12 +200,27 @@ const WIDE_RATIO = 3;
 const WIDE_MIN_LOW_USD = 5;
 /** Float noise must not decide a 3× test. */
 const EPS = 1e-9;
+/** A market price this many times off every listing and the card's own Cardmarket price is an old or odd sale. */
+const STALE_RATIO = 3;
 
-function toPrice(row: JaRow, ownCardmarket: boolean): TcgplayerPrice | null {
+/** a is more than STALE_RATIO times b. */
+const far = (a: number, b: number) => a > STALE_RATIO * b * (1 + EPS);
+
+/**
+ * TCGplayer's market price is what the card last sold for. Now and then that is a sale that says nothing about today
+ * ($4.99 for a Secret Rare that is listed from $275 and sells for €94 on Cardmarket). Only when both other signals
+ * agree, every listing and the Cardmarket price on the same side, is it ignored: the card keeps its Cardmarket price.
+ */
+function staleSale(market: number, low: number | null, high: number | null, cardmarketUsd: number | undefined): boolean {
+  if (!cardmarketUsd) return false;
+  return (low !== null && far(low, market) && far(cardmarketUsd, market)) || (high !== null && far(market, high) && far(market, cardmarketUsd));
+}
+
+function toPrice(row: JaRow, v: JaVariantRef): TcgplayerPrice | null {
   const [market, low, mid, high] = row;
-  if (market !== null) return { low, mid, high, market, directLow: null };
+  if (market !== null) return staleSale(market, low, high, v.cardmarketUsd) ? null : { low, mid, high, market, directLow: null };
   // Listings but no recent sales. What the card really sold for on Cardmarket beats what sellers ask.
-  if (ownCardmarket || mid === null) return null;
+  if (v.ownCardmarket || mid === null) return null;
   const lone = low === mid && high === mid;
   if (lone && mid >= LONE_LISTING_MAX_USD) return null;
   const wide = !lone && low !== null && low >= WIDE_MIN_LOW_USD && mid > WIDE_RATIO * low * (1 + EPS);
@@ -217,7 +236,8 @@ function toPrice(row: JaRow, ownCardmarket: boolean): TcgplayerPrice | null {
  *  c. for a plain mirror only: the one product with that number that is not the base card and still unclaimed
  *     (M2a: TCGdex lists a "reverse" where TCGplayer sells a "Poke Ball Pattern").
  * A product is never given to two variants. null also when the product only has asking prices and the variant has
- * its own Cardmarket price, or the only asking price is a lone listing of $100 or more.
+ * its own Cardmarket price, the only asking price is a lone listing of $100 or more, or the market price is an old
+ * sale (staleSale). Products without a price are in the file too (number only), so a number two cards share is seen.
  */
 export function matchJaVariants(localId: string, variants: readonly JaVariantRef[], file: JaSetFile): (JaMatch | null)[] {
   const found: (Found | undefined)[] = variants.map(() => undefined);
@@ -250,7 +270,7 @@ export function matchJaVariants(localId: string, variants: readonly JaVariantRef
   return variants.map((v, i) => {
     const product = found[i];
     const row = product && chooseRow(v, product.rows);
-    const price = row ? toPrice(row, v.ownCardmarket) : null;
-    return product && price ? { productId: product.id, price, updated: file.d } : null;
+    const price = row ? toPrice(row, v) : null;
+    return product && price ? { productId: product.id, price, updated: file.d, kind: product.kind } : null;
   });
 }

@@ -6,6 +6,7 @@ import {
   cardNames,
   cardPath,
   foilOf,
+  labelContext,
   plainMirrorIsPokeBall,
   printedNumberOf,
   rangeMarker,
@@ -91,6 +92,18 @@ describe('variantShortLabel', () => {
     expect(variantShortLabel('reverse', 'ko', sv8a)).toBe('몬스터볼');
     expect(variantShortLabel('reverse-energy', 'ko')).toBe('에너지');
     expect(variantShortLabel('reverse-team-rocket', 'en')).toBe('Team Rocket');
+  });
+
+  it('names a plain mirror by the pattern its TCGplayer product has (M2a: TCGdex only says "reverse")', () => {
+    const m2a = labelContext('ja', [{ key: 'normal' }, { key: 'reverse-energy' }, { key: 'reverse', pattern: 'team-rocket' }]);
+    expect(m2a.patterns).toEqual({ reverse: 'team-rocket' });
+    expect(variantShortLabel('reverse', 'en', m2a)).toBe('Team Rocket');
+    expect(variantLabel('reverse', 'ko', m2a)).toBe('로켓단 미러');
+    const friend = labelContext('ko', [{ key: 'normal' }, { key: 'reverse', pattern: 'friendball' }]);
+    expect(variantLabel('reverse', 'en', friend)).toBe('Friend Ball mirror');
+    // Without one, as before: the plain mirror next to a special pattern is the Poké Ball one.
+    expect(variantLabel('reverse', 'en', labelContext('ja', [{ key: 'normal' }, { key: 'reverse-energy' }, { key: 'reverse' }]))).toBe('Poké Ball mirror');
+    expect(labelContext('en', [{ key: 'normal' }]).patterns).toBeUndefined();
   });
 
   it('is the full name for everything else', () => {

@@ -204,27 +204,27 @@ function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[], j
 }
 
 /**
- * Full card with prices. KO reads JA data (lang stays 'ja'). Cached 30 min. 404 → HttpError status 404.
+ * Full card with prices. KO reads JA data (lang stays 'ja'). The TCGdex answer is cached 30 min; the card is built
+ * from it on every call. 404 → HttpError status 404.
  * Never waits for exchange rates: EUR prices are converted with the last known (or fallback) rates while live
  * rates load in the background; pricing.applyRates re-converts once they arrive.
  * Japanese cards also load their set's TCGplayer price file (tcgplayerJa.getJaSetPrices) next to the card: it never
- * fails and gives up after 4 s, and without it the card has its Cardmarket prices, as before.
+ * fails and gives up after 4 s, and without it the card has its Cardmarket prices, as before. It is asked for again
+ * the next time (a failure is not remembered), so a network blip doesn't leave the card on Cardmarket prices.
  */
-export function getCard(lang: CardLang, id: string): Promise<CardDetail> {
+export async function getCard(lang: CardLang, id: string): Promise<CardDetail> {
   const src = dataLang(lang);
-  return cached(`card:${src}:${id}`, 30 * MINUTE, async () => {
-    void getRates();
-    // The set is read off the card id ("SV-P-085" → "SV-P") so the price file loads next to the card, not after it.
-    const setId = splitCardId(id).setId;
-    const [raw, sets, ja] = await Promise.all([
-      fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`),
-      setsOrEmpty(src),
-      src === 'ja' ? getJaSetPrices(setId) : null,
-    ]);
-    // Prices are matched by card number: never with another set's file, should an id ever split differently.
-    const sameSet = !raw.set?.id || setKey(raw.set.id) === setKey(setId);
-    return toDetail(raw, src, getRatesSync(), sets, sameSet ? ja : null);
-  });
+  void getRates();
+  // The set is read off the card id ("SV-P-085" → "SV-P") so the price file loads next to the card, not after it.
+  const setId = splitCardId(id).setId;
+  const [raw, sets, ja] = await Promise.all([
+    cached(`cardraw:${src}:${id}`, 30 * MINUTE, () => fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`)),
+    setsOrEmpty(src),
+    src === 'ja' ? getJaSetPrices(setId) : null,
+  ]);
+  // Prices are matched by card number: never with another set's file, should an id ever split differently.
+  const sameSet = !raw.set?.id || setKey(raw.set.id) === setKey(setId);
+  return toDetail(raw, src, getRatesSync(), sets, sameSet ? ja : null);
 }
 
 const toBrief = (c: CardBrief): CardBrief => ({

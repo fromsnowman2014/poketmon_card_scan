@@ -211,13 +211,15 @@ $0.60, Master Ball mirror $2.27). The kid picks the printing **before** reading 
   the price ("Master Ball mirror $2.27"): the short name is `aria-hidden` when it differs.
 
 **Names** (`card/format.ts`: `variantLabel(key, uiLang, ctx?)` and `variantShortLabel(…)` for tiles; `ctx` is
-`{ cardLang, siblings }`, the card's language and the keys of all its printings)
+`{ cardLang, siblings, patterns }`, the card's language, the keys of all its printings and the patterns the price
+data names: `format.labelContext(lang, card.variants)`)
 
 | Printing | EN tile / full name | KO tile / full name |
 |---|---|---|
 | `normal`, `holo`, `firstEdition` | Normal, Holo, 1st Edition | 기본, 홀로, 1st 에디션 |
 | `reverse` on an English card (or card language unknown) | Reverse Holo | 리버스 홀로 |
 | `reverse` on a Japanese / Korean card | Mirror | 미러 |
+| `reverse` whose TCGplayer product names its pattern (`CardVariant.pattern`, M2a: Friend Ball, Dusk Ball, Team Rocket…) | that pattern, as for `reverse-<pattern>` | 그 무늬 |
 | `reverse` on a Japanese / Korean card that also has a special pattern and no `reverse-pokeball` (SV8a, M2a) | Poké Ball / Poké Ball mirror | 몬스터볼 / 몬스터볼 미러 |
 | `reverse-pokeball`, `reverse-masterball` | Poké Ball, Master Ball (+ " mirror") | 몬스터볼, 마스터볼 (+ " 미러") |
 | `reverse-energy` | Energy / Energy mirror | 에너지 / 에너지 미러 |

@@ -289,7 +289,7 @@ export interface SetInfo { id: string; name: string; official: number; total: nu
 export function getSets(lang: CardLang): Promise<SetInfo[]>;                        // cached 24h
 //   Newest first, ids de-duplicated, TCG Pocket removed; 'ko' returns the JA sets; 'en' gets abbreviation from en-sets.json.
 //   Fetched with one GraphQL POST (/v2/graphql — the REST list has no releaseDate); falls back to REST /v2/{lang}/sets.
-export function getCard(lang: CardLang, id: string): Promise<CardDetail>;           // cached 30min, builds variants via pricing.ts
+export function getCard(lang: CardLang, id: string): Promise<CardDetail>;           // TCGdex answer cached 30min ("cardraw:"); the card is built (pricing.ts) on every call with the set's price file, which is asked for again after a failure
 //   'ko' reads ja. Never waits for exchange rates (last known ones; live rates load in the background).
 //   Japanese data also loads the set's TCGplayer price file (tcgplayerJa.getJaSetPrices) in the same Promise.all:
 //   it never fails, gives up after 4 s, and without it the card has its Cardmarket prices.
@@ -400,14 +400,21 @@ How one printing of a Japanese card gets its price (`tcgdex.getCard` loads the s
    (leading zeros and case ignored) and whose name tag says the same printing — no tag = the base card, "Mirror Foil" /
    "Mirror Holo(foil)" = plain mirror, "Master Ball Pattern" = masterball, "Poke Ball Pattern" = pokeball, "Energy Symbol
    Pattern" = energy, "<X> Ball Pattern" = `<x>ball`, "Team Rocket Pattern" = team-rocket; other brackets belong to the
-   card's name — only when exactly one product fits and the card has one variant of that kind. (c) For a plain mirror
-   only: the one product with that number that is not the base card and is still unclaimed (M2a lists a "reverse"
-   where TCGplayer sells a "Poke Ball Pattern"). A product is never given to two variants. Half of the Japanese sets
-   (SV2a, M2a, SV9a, the Sun & Moon era …) have no ids in TCGdex and are priced through (b).
+   card's name — only when exactly one product fits and the card has one variant of that kind. Products without a
+   price are in the file too, so a number two cards share ("057/SV-P" is Penny and Taipei's Pikachu) is never given to
+   the one that happens to have a price. (c) For a plain mirror only: the one product with that number that is not the
+   base card and is still unclaimed (M2a lists a "reverse" where TCGplayer sells a "Poke Ball", "Friend Ball", "Dusk
+   Ball" or "Team Rocket Pattern"); the variant keeps the key `reverse` and carries the product's pattern as
+   `CardVariant.pattern`, which only its name and drawing use ("Team Rocket mirror"). A product is never given to two
+   variants. Half of the Japanese sets (SV2a, M2a, SV9a, the Sun & Moon era …) have no ids in TCGdex and are priced
+   through (b).
 2. **Row.** A Japanese product is one printing, so any of its rows is the right card; the order only prefers the
    likelier one (holo-ish: holofoil, unlimited-holofoil, normal …; plain: normal, unlimited, holofoil …; 1st-edition
    stamps: the 1st-edition rows first). A row without a market price gives way to its normal/holofoil twin that has one.
-3. **Price.** Market price present → an exact TCGplayer price (`source: 'tcgplayer'`, `updated` = the file's time).
+3. **Price.** Market price present → an exact TCGplayer price (`source: 'tcgplayer'`, `updated` = the file's time),
+   unless it is an old sale (`staleSale`): every listing more than 3× away from it and the variant's own Cardmarket
+   price more than 3× away on the same side ($4.99 for S5I-085, listed from $275, €94 on Cardmarket). The variant then
+   keeps its Cardmarket price (6 printings of 12,911 checked).
    No market price (listings, no recent sales): the variant's own Cardmarket price stays if it has one; otherwise the
    asking price is shown as approximate (`asking`): the middle listing, or the cheapest when the middle is over 3× it
    and it is at least $5; a lone listing of $100 or more is no price at all.
@@ -418,8 +425,9 @@ How one printing of a Japanese card gets its price (`tcgdex.getCard` loads the s
    shows the mixed "-holo" number, labelled "all mirror patterns together"; a Master Ball mirror has no price).
 
 Measured on 3,341 cached cards of 22 sets: 793 printings go from "No price" to priced (223 Master Ball mirrors), none
-lose a price, 1 default printing changes. No cross-check against Cardmarket for market-priced rows: on cheap cards the
-two markets differ by 3× for honest reasons, and above $25 nearly every disagreement is a Cardmarket placeholder.
+lose a price, 1 default printing changes. Cardmarket alone never overrules a market price (only together with the
+listings, step 3): on cheap cards the two markets differ by 3× for honest reasons, and above $25 nearly every
+disagreement is a Cardmarket placeholder.
 
 ### lib/imageProc.ts / lib/parseCode.ts / lib/ocr.ts / lib/identify.ts (scan)
 Import these only from the Scan screen and its parts (`screens/scan/*`, a lazy chunk): ocr.ts loads tesseract.js with a
@@ -706,7 +714,9 @@ fallback images have no CORS headers and stay in the browser's HTTP cache only.
 ```
 
 Product = `[card number as TCGplayer writes it, name tags joined by "|", rows]`; row = `[market, low, mid, high]`;
-`c: 1` = numbers and tags are filled in for the group. Sets whose TCGdex id is not a TCGplayer code get alias files
+a card without a price today has `{}` as rows (its number still counts, see matching step 1);
+`c: 1` = numbers and tags are filled in for the group. `all.json` has `unpriced: 1` when its groups list those cards:
+a snapshot without the mark makes the next run read every product list once more. Sets whose TCGdex id is not a TCGplayer code get alias files
 (`SET_ALIASES`: bw8a, pmcg1…6).
 
 CI (`.github/workflows/deploy.yml`): the price step runs on deploy runs only (pushes to main, manual runs, and the
