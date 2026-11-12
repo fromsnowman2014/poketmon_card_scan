@@ -6,7 +6,7 @@ import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
 import { Link } from '../../lib/router';
 import { clearHistory } from '../../lib/store';
 import type { HistoryItem } from '../../lib/types';
-import { cardNames } from '../card/format';
+import { cardNames, cardPath } from '../card/format';
 
 const STRINGS: Strings<'title' | 'clear' | 'cleared'> = {
   ko: { title: '최근 본 카드', clear: '지우기', cleared: '최근 본 카드를 지웠어요' },
@@ -40,7 +40,8 @@ export function RecentCards({ items }: { items: HistoryItem[] }) {
           const name = cardNames({ name: item.name, dexIds: item.dexIds ?? [] }, item.lang, lang).title;
           return (
             <li key={`${item.lang}:${item.id}`}>
-              <Link to={`/card/${item.lang}/${encodeURIComponent(item.id)}`} className="home-recent-item">
+              {/* Opens on the printing whose price this is (the one the kid last looked at). */}
+              <Link to={cardPath(item, item.variant)} className="home-recent-item">
                 <CardImage
                   image={item.image}
                   fallback={item.imageFallback}

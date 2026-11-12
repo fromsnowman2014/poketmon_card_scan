@@ -30,6 +30,7 @@ type Key =
   | 'searchLangNote'
   | 'credits'
   | 'tcgdex'
+  | 'tcgcsv'
   | 'pokeapi'
   | 'tesseract'
   | 'rates'
@@ -55,6 +56,7 @@ const STRINGS: Strings<Key> = {
     searchLangNote: '한국어 카드는 日本語로 찾아요. 세트 번호가 같아요.',
     credits: '데이터 출처',
     tcgdex: '카드 정보 · 사진 · 가격 (TCGplayer, Cardmarket)',
+    tcgcsv: '일본 카드 가격 (TCGplayer, 하루 한 번)',
     pokeapi: '포켓몬 이름 (한국어 · 日本語 · English)',
     tesseract: '카드 번호 읽기 (내 폰 안에서만)',
     rates: '환율',
@@ -80,6 +82,7 @@ const STRINGS: Strings<Key> = {
     searchLangNote: 'Korean cards are under 日本語. They share set codes.',
     credits: 'Data credits',
     tcgdex: 'Card info, pictures and prices (TCGplayer, Cardmarket)',
+    tcgcsv: 'Japanese card prices (TCGplayer, once a day)',
     pokeapi: 'Pokémon names (English, 한국어, 日本語)',
     tesseract: 'Reads the card number (on your phone only)',
     rates: 'Exchange rates',
@@ -90,8 +93,10 @@ const STRINGS: Strings<Key> = {
   },
 };
 
-const CREDITS: { name: string; url: string; key: 'tcgdex' | 'pokeapi' | 'tesseract' | 'rates' }[] = [
+const CREDITS: { name: string; url: string; key: 'tcgdex' | 'tcgcsv' | 'pokeapi' | 'tesseract' | 'rates' }[] = [
   { name: 'TCGdex', url: 'https://tcgdex.dev', key: 'tcgdex' },
+  // The daily TCGplayer price files for Japanese cards are built from it (scripts/build-ja-prices.mjs).
+  { name: 'TCGCSV', url: 'https://tcgcsv.com', key: 'tcgcsv' },
   { name: 'PokeAPI', url: 'https://pokeapi.co', key: 'pokeapi' },
   { name: 'Tesseract.js', url: 'https://github.com/naptha/tesseract.js', key: 'tesseract' },
   // open.er-api.com's free tier asks for this attribution.

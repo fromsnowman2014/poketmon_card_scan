@@ -5,6 +5,7 @@ import { TierBadge, useValueTier } from '../../components/TierBadge';
 import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
 import { Link } from '../../lib/router';
 import type { CollectionItem } from '../../lib/types';
+import { cardPath } from '../card/format';
 import { itemNames } from './itemName';
 
 const STRINGS: Strings<'title'> = {
@@ -20,7 +21,7 @@ export function BestCard({ item, photo }: { item: CollectionItem; photo?: string
   const { title: name, subtitle } = itemNames(item, lang);
   return (
     <Link
-      to={`/card/${item.lang}/${encodeURIComponent(item.id)}`}
+      to={cardPath(item, item.variant)}
       className={`surface collection-best tier-${tier} slide-up`}
     >
       <CardImage

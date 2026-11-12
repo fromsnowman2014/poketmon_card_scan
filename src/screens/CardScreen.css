@@ -40,11 +40,12 @@
  */
 .card-art {
   --card-art-below: calc(var(--card-fold-h, calc(var(--safe-top) + 378px)) + var(--tabbar-h) + var(--tabbar-lift) + 5px + 3px);
+  --card-art-min: 92px; /* useFitArt reads it: at this size the page is "tight" (see [data-tight] below) */
   position: relative;
   z-index: 1;
   display: block;
-  width: clamp(92px, calc((100vh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
-  width: clamp(92px, calc((100svh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
+  width: clamp(var(--card-art-min), calc((100vh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
+  width: clamp(var(--card-art-min), calc((100svh - var(--safe-bottom) - var(--card-art-below)) * 63 / 88), min(46%, 220px));
   padding: 0;
   border: 0;
   border-radius: 4.8% / 3.4%;
@@ -156,23 +157,303 @@ button.card-art:active {
   color: var(--text-muted);
 }
 
-/* ---------- Variants ---------- */
+/* ---------- Printing picker: one row of tiles above the price ---------- */
 
 .card-variants {
-  margin-top: -4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
 }
 
-.card-variant-row {
+/* "내 카드는 어떤 거예요?": a visible line only where the phone is tall enough to spare it (from 880px); below that
+   it still names the group for screen readers (same clipping as .sr-only). */
+.card-variants-head {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+}
+
+@media (max-height: 879px) {
+  .card-variants-head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.card-tiles {
+  display: flex;
+  gap: 6px;
+}
+
+/* Short name over its price. Each tile is a size container, so a long amount ("약 123,400원") shrinks to fit. */
+.card-tile {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
+  gap: 1px;
+  min-height: 50px;
+  padding: 6px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 700;
+  text-align: center;
+  container-type: inline-size;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 
-.card-variant-none {
+/* Picked: tinted fill, a thicker ring and a check on the corner (not by color alone). */
+.card-tile[aria-pressed="true"],
+.card-help-row[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.card-tile[aria-pressed="true"] {
+  color: var(--primary-text);
+}
+
+.card-tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-tile-price {
+  color: var(--text);
+  font-size: 15px;
+  font-size: clamp(12px, 100cqi / (var(--money-chars, 6) * 0.64), 15px);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.card-tile-none {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
+  line-height: 19px; /* the price line's height: every tile is as tall */
+}
+
+.card-tile-check {
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  display: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 2px var(--bg);
+  color: var(--on-primary);
+}
+
+[aria-pressed="true"] > .card-tile-check {
+  display: grid;
+}
+
+/* Four or more printings, or long names ("Holo · Shadowless"): the same tiles in a sideways scroller. A tile is as
+   wide as its name needs (104–168px; the name wraps onto two lines at most). Vertical room for the ring and the
+   check, which the scroll box would clip; .scroll-x's own (bigger) glow room is not needed here. No snapping: the
+   picker slides the picked tile just far enough into view. */
+.card-tiles-scroll {
+  gap: 6px;
+  margin-block: -8px;
+  padding-block: 8px;
+  scroll-snap-type: none;
+}
+
+.card-tiles-scroll .card-tile {
+  flex: none;
+  width: max-content;
+  min-width: 104px;
+  max-width: 168px;
+  padding-inline: 12px; /* a name that fills the tile ends clear of the corner check */
+  container-type: normal;
+}
+
+.card-tiles-scroll .card-tile-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+
+.card-tiles-scroll .card-tile-price {
+  font-size: 15px;
+}
+
+/* Short phones (iPhone SE): 44px tiles, pulled a little closer to the chips and the price panel, so the art keeps
+   more than its minimum. In the scroller a long name stays on one line in a wider tile instead of making every
+   tile two lines tall. */
+@media (max-height: 720px) {
+  .card-variants {
+    margin: -2px 0 -4px;
+  }
+
+  .card-tile {
+    min-height: var(--tap);
+    padding-block: 2px;
+  }
+
+  .card-tiles-scroll .card-tile {
+    max-width: 240px;
+  }
+
+  .card-tiles-scroll .card-tile-name {
+    display: block;
+    white-space: nowrap;
+  }
+}
+
+/* "반짝이 무늬에 따라 가격이 달라요. 구별하는 법 ›" under the price panel (+ the Korean-card note above it). */
+.card-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: -4px;
+}
+
+.card-ko-note {
+  text-align: center;
+  text-wrap: balance;
+}
+
+.card-variant-how {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 6px;
+  text-align: center;
+}
+
+/* A 44px tap target that looks like part of the line. */
+.card-variant-how-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--tap);
+  margin: -12px -6px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  font-size: inherit;
+}
+
+.card-variant-how-link:active {
+  background: var(--primary-soft);
+}
+
+/* ---------- "Which one is your card?" sheet ---------- */
+
+.card-help {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-help-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 6px 0 1px; /* the picked row's ring and corner check, inside the sheet's scroll box */
+}
+
+.card-help-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 6px 14px 6px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.card-help-art {
+  display: block;
+  border-radius: 4px;
+}
+
+.card-help-name {
+  display: block;
+  font-size: var(--fs-body);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.card-help-how {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.card-help-price {
+  font-size: var(--fs-body);
+  font-weight: 800;
+}
+
+.card-help-none {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.card-help-intro {
+  text-wrap: balance;
+}
+
+.card-help-foot {
+  text-align: center;
+  text-wrap: balance;
 }
 
 /* ---------- Price hero ---------- */
+
+/* The panel, with invisible copies for the card's other printings laid over it (never in the flow, never tappable):
+   they are only measured, so the art is sized for the tallest panel from the start. */
+.card-price-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-price-ghost {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  visibility: hidden;
+  pointer-events: none;
+}
 
 .card-price {
   display: flex;
@@ -274,6 +555,48 @@ button.card-art:active {
   font-weight: 800;
 }
 
+/* ---------- Tight pages ----------
+   When even the smallest art leaves the first view too tall (a Korean kid's second-money line, four long-named
+   printings, a trend pill that wraps…), useFitArt sets data-tight on the body and CSS gives lines back, least needed
+   first. "1": tile names on one line; the price label on one line (an ellipsis is the last resort) with a pill that
+   keeps just its arrow and number. "2": the printed-name line under the title goes too. What is hidden stays for
+   screen readers (same clipping as .sr-only). */
+.card-body[data-tight] .card-tiles-scroll .card-tile {
+  max-width: 240px;
+}
+
+.card-body[data-tight] .card-tiles-scroll .card-tile-name {
+  display: block;
+  white-space: nowrap;
+}
+
+.card-body[data-tight] .card-price-head {
+  flex-wrap: nowrap;
+  max-width: 100%;
+}
+
+.card-body[data-tight] .card-price-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-body[data-tight] .card-trend {
+  flex: none;
+}
+
+.card-body[data-tight] .card-trend-words,
+.card-body[data-tight="2"] .card-subtitle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .card-trend-up .card-trend-pct {
   color: var(--up);
 }
@@ -296,7 +619,7 @@ button.card-art:active {
   text-align: left;
 }
 
-.card-range-recent {
+.card-range-usual {
   grid-template-areas:
     "label label label"
     "low track high";
@@ -407,7 +730,7 @@ button.card-art:active {
 
 .card-price-empty {
   gap: 6px;
-  padding: 26px 20px;
+  padding: 26px 20px 20px;
 }
 
 .card-mystery {
@@ -420,6 +743,30 @@ button.card-art:active {
   background: radial-gradient(circle at 50% 35%, var(--surface-3), var(--surface-2) 70%);
   font-size: 30px;
   line-height: 1;
+}
+
+.card-mystery-text {
+  text-wrap: balance;
+}
+
+/* "아래에서 eBay 가격 보기 ↓" closes the no-price panel on every phone (no source line to trade places with). */
+.card-ebay-jump.card-ebay-jump-empty {
+  order: 0;
+  margin: -6px 0 -12px;
+}
+
+/* Short phones (iPhone SE): a smaller magnifier and tighter padding keep the whole panel above the Scan button. */
+@media (max-height: 720px) {
+  .card-price-empty {
+    padding: 16px 16px 14px;
+  }
+
+  .card-mystery {
+    width: var(--tap);
+    height: var(--tap);
+    margin-bottom: 2px;
+    font-size: 22px;
+  }
 }
 
 /* ---------- My Cards ---------- */

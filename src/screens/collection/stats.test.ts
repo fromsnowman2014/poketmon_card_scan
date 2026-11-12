@@ -73,6 +73,12 @@ describe('bestItem / oldestUpdate', () => {
     expect(oldestUpdate(items)).toBe('2026-10-20T00:00:00.000Z');
     expect(oldestUpdate([])).toBeUndefined();
   });
+
+  it('leaves cards without a price out of it: a check that finds no price keeps their old time', () => {
+    const unpriced = item('x', null, { priceUpdatedAt: '2026-09-01T00:00:00.000Z' });
+    expect(oldestUpdate([...items, unpriced])).toBe('2026-10-20T00:00:00.000Z');
+    expect(oldestUpdate([unpriced])).toBeUndefined();
+  });
 });
 
 describe('milestones', () => {

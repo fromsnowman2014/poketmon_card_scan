@@ -41,10 +41,9 @@ export default function CollectionScreen() {
 - Anything that must be readable on the first view (the Card screen's price) has to end above
   `100svh - var(--safe-bottom) - var(--tabbar-h) - var(--tabbar-lift) - 5px`: the raised Scan button sits
   horizontally centered, right where centered content is. Check it at 375×667 (iPhone SE). The Card screen's order
-  (art → name → chips → price → variants → add → eBay → more) is in ARCHITECTURE.md › Card screen layout. There the
-  elements that must fit carry `data-card-fold` (`FOLD_ATTR` from PriceHero); CardScreen measures how far down they end
-  (minus the art) into `--card-fold-h`, and the art takes whatever height is left (min 92px wide). Add new
-  above-the-price content inside that measured area and the art shrinks for it; don't hard-code reserves.
+  (art → name → chips → printing tiles → price → "how to tell" line → add → eBay → more) and how it keeps the price
+  on the first view are under [Card screen](#card-screen-printings-and-the-price-panel) below. Add new above-the-price
+  content inside the measured area and the art shrinks for it; don't hard-code reserves.
 - A screen without a TopBar gets a status-bar scrim from global.css (dark: frosted strip that fades in once the page
   is scrolled, via `<html data-scrolled>`; light: the gradient strip, always on).
 - `<TopBar>` comes first. It is sticky and covers the status-bar area (`safe-area-inset-top`). A screen without a
@@ -132,7 +131,7 @@ All accept `className`. All built-in text is bilingual.
 | `CardImage` | `image?; fallback?; photo?; alt; size?: 'thumb' \| 'full'; tier?; eager?; code?: { set; number }` | Tries TCGdex `${image}/low|high.webp` (cacheable by the service worker; `assets.tcgdex.net/ja/` pictures load plain from the start because their CORS header comes twice; an English CORS failure is retried once as a plain image) → `fallback` (CardDetail.imageFallback) → `photo` (user data URL) → original card-back art. With `code`, the set code and number are printed on the card back whenever no picture shows, so look-alike backs can be told apart — pass it in every grid. Shimmers while loading, lazy by default (`eager` for the hero), always 63:88 with card corners. `tier` adds a glow in the tier color (gold for treasure). Width comes from the parent |
 | `TierBadge` | `tier: ValueTier; cheer?; size?: 'sm' \| 'md' \| 'lg'` | Emoji + price-band name: 🍃 동전 카드, ⭐ 과자값 카드, 💎 용돈 카드, 🔥 귀한 카드, 👑 보물 카드 (Pocket change, Snack money, Allowance, Prized, Treasure) — money words, never the rarity words printed on cards. `cheer` uses kind, upbeat copy, cheap cards included ("🍃 가격은 작아도 멋진 카드!", "👑 보물 카드예요! 소중히 보관해요!"). Treasure is a shimmering gold pill. Also exports `TIER_ORDER`, `TIER_EMOJI`, `TIER_LABELS` (use with `useStrings`) and `useValueTier()`: `(usd) => ValueTier` in the money shown (settings.currency + live rates; $5 / 5,000원 for 용돈). Every tier shown goes through it, never a bare `valueTier(usd)` |
 | `ExternalLink` | `href; site: 'eBay' \| 'TCGplayer' \| 'Cardmarket'; kind?: 'shop'` or `href; site: string; kind: 'site'` + button props | The only way to leave the app: shops, and with `kind="site"` any other website (credits, the GitHub guide), where `site` can be any name and the question reads "{site} 웹사이트로 가요 · 앱 밖의 웹사이트가 열려요. 어른과 함께 볼까요?" / "Opening {site} · This opens a website outside the app. Look together with a grown‑up!". One OK per session covers both kinds. Renders a `<button type="button" role="link">` with no href (so a long-press can't open the shop past the check); style it with your own class as if it were a link — a zero-specificity reset removes the button look. Opens a new tab (`window.open(…, 'noopener')`, http/https only) after a one-time-per-session grown-up check (Sheet: "{site}는 진짜로 카드를 사고파는 곳이에요. 어른과 함께 볼까요?"). Adds a screen-reader "(새 탭)". Put an `external-link` icon in it and say near it that a website opens |
-| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (follows the country: US dollars, Korea won; overridable), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `summary.converted` / `item.priceApprox`) adds a small "약 " in the Korean UI for any money (on the baseline) and a small "≈ " in the English UI — never both. `secondary` allows a small line underneath in the other money the kid knows (`secondaryCurrency(currency, country)`): dollars under won ("약 $0.04" / "$292.69"); under dollars, won only when the kid lives in Korea but switched to dollars ("약 398,500원"); none for a kid in the US who sees dollars (no ₩, and no `money-stack` gap). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
+| `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (follows the country: US dollars, Korea won; overridable), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `isApproxPrice(summary)` from pricing.ts — converted from euros, or an asking price — or `item.priceApprox`) adds a small "약 " in the Korean UI for any money (on the baseline) and a small "≈ " in the English UI — never both. `secondary` allows a small line underneath in the other money the kid knows (`secondaryCurrency(currency, country)`): dollars under won ("약 $0.04" / "$292.69"); under dollars, won only when the kid lives in Korea but switched to dollars ("약 398,500원"); none for a kid in the US who sees dollars (no ₩, and no `money-stack` gap). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
 | `SearchBar` | `onSubmit(q); value?; defaultValue?; onChange?; placeholder?; autoFocus?` | 58px pill with clear button; submits trimmed, non-empty text and closes the keyboard. Default placeholder "카드 이름이나 번호" |
 | `Sheet` | `open; onClose; title?; children` | Bottom sheet on native `<dialog>` (focus trap, inert page). Escape, backdrop tap and × call `onClose` |
 | `EmptyState` | `emoji; title; text?; action?` | Centered message for empty / not found / offline / error. `action` is usually one `.btn-primary .btn-lg .btn-block` |
@@ -155,8 +154,8 @@ container and let the font shrink with the amount:
 }
 ```
 Used by the Home and My Cards totals, the best card price, the Card screen's big price (`.card-price` is the container),
-the eBay Buy It Now numbers (`.card-ebay-stats` is the container; both numbers share `--ebay-chars`, the wider of the two) and the Home "Recently viewed" tile prices
-(each tile is a container; an ellipsis is the last resort).
+the eBay Buy It Now numbers (`.card-ebay-stats` is the container; both numbers share `--ebay-chars`, the wider of the two), the Home "Recently viewed" tile prices
+(each tile is a container; an ellipsis is the last resort) and the Card screen's printing tiles (each `.card-tile` is a container; 15px down to 12px).
 
 ## Country picker and first-launch question
 
@@ -178,6 +177,109 @@ The money follows where the kid lives (ARCHITECTURE.md › Country and money).
   USA"). It shows only when `needsCountryPrompt()` (no confident guess from the phone) and at most once per app load.
   A pick always sets that country's money (the button names it; the search language follows only a real country
   change); ×, backdrop and Escape keep the guess. Afterwards focus goes to Home's heading (`onClosed`; nothing on the page opened the sheet).
+
+## Card screen: printings and the price panel
+
+One card can be several products with very different prices (a Japanese Hawlucha: Normal $0.18, Poké Ball mirror
+$0.60, Master Ball mirror $2.27). The kid picks the printing **before** reading the price.
+
+**Order, top to bottom** (`screens/CardScreen.tsx`)
+1. Card art (tap to zoom). Its size is whatever the first view has left (see "Fold" below).
+2. Name, printed name under it, one chip row (flag + set + number, rarity).
+3. **Printing tiles** (`card/VariantPicker.tsx`), only when the card has more than one printing.
+4. **Price panel** (`card/PriceHero.tsx`).
+5. Notes under the panel, each a caption: the Korean-card note (route language `ko`), then "The price depends on the
+   shiny pattern. How to tell ›" (`card/VariantHelp.tsx`, only with several printings).
+6. Add to My Cards → eBay panel → grown-up line → More prices.
+
+**Printing tiles** (`.card-tile` in CardScreen.css)
+- One row, in the order of `card.variants` (pricing.ts sorts them most common first: Normal → Poké Ball → Master Ball,
+  which is also cheapest first). Never a second row above the price.
+- Each tile is a `<button aria-pressed>` with two lines: the short name (13px/700) over `<Money>` (15px/800,
+  approximate when `isApproxPrice(summary)`), or "No price" / "가격 없음" (12px muted). No tier emoji on tiles.
+- Up to three printings with plain names: equal columns, 6px gap (108px wide at 375px). The tile is a size container,
+  so a long amount shrinks with `--money-chars` (down to 12px) instead of overflowing.
+- Four or more printings, or a name with " · " in it ("Holo · Shadowless"): the same tiles in a `.scroll-x` row
+  (`printing.tileLayout`), each as wide as its name needs (104–168px, name on two lines at most); the picked tile is
+  scrolled into view inside the row, never the page.
+- Height: 50px; 44px on phones up to 720px tall, where long names also stay on one line in a wider tile.
+- Picked state: `--primary-soft` fill, `--primary` border with a 1px ring, name in `--primary-text`, and a small check
+  on the corner (`.card-tile-check`) — never by color alone. The panel title repeats the full name ("Market price ·
+  Poké Ball mirror").
+- The group is labelled "Which one is your card?" / "내 카드는 어떤 거예요?". The label is a visible line only on phones
+  from 880px tall; below that it is clipped like `.sr-only`. A tile's accessible name is the full printing name plus
+  the price ("Master Ball mirror $2.27"): the short name is `aria-hidden` when it differs.
+
+**Names** (`card/format.ts`: `variantLabel(key, uiLang, ctx?)` and `variantShortLabel(…)` for tiles; `ctx` is
+`{ cardLang, siblings }`, the card's language and the keys of all its printings)
+
+| Printing | EN tile / full name | KO tile / full name |
+|---|---|---|
+| `normal`, `holo`, `firstEdition` | Normal, Holo, 1st Edition | 기본, 홀로, 1st 에디션 |
+| `reverse` on an English card (or card language unknown) | Reverse Holo | 리버스 홀로 |
+| `reverse` on a Japanese / Korean card | Mirror | 미러 |
+| `reverse` on a Japanese / Korean card that also has a special pattern and no `reverse-pokeball` (SV8a, M2a) | Poké Ball / Poké Ball mirror | 몬스터볼 / 몬스터볼 미러 |
+| `reverse-pokeball`, `reverse-masterball` | Poké Ball, Master Ball (+ " mirror") | 몬스터볼, 마스터볼 (+ " 미러") |
+| `reverse-energy` | Energy / Energy mirror | 에너지 / 에너지 미러 |
+| `reverse-loveball`, `-quickball`, `-duskball`, `-friendball` | Love Ball, Quick Ball, Dusk Ball, Friend Ball (+ " mirror") | 러브러브볼, 퀵볼, 다크볼, 프렌드볼 (+ " 미러") |
+| `reverse-team-rocket` | Team Rocket / Team Rocket mirror | 로켓단 / 로켓단 미러 |
+| anything after a known printing | "Holo · Shadowless", "Normal · Set logo stamp", "Master Ball mirror · 2" | "홀로 · Shadowless", "기본 · 세트 로고 스탬프" |
+
+Saved cards (My Cards tiles) only know the card's language and the printings saved next to it, so a lone Japanese
+`reverse` reads "Mirror" / "미러" there.
+
+**Price panel** (`PriceHero`, props `variant`, `tier`, `variantName`, `ebayTarget`, `approx`, `mixedMirror`, `rarePattern`)
+- Title "Market price · {printing}" / "시세 · {printing}". An asking price (`summary.asking`: TCGplayer listings,
+  no recent sales) is titled "Asking price" / "파는 사람이 부른 가격", shown with ≈ / 약, and its source line reads
+  "TCGplayer · no recent sales" / "TCGplayer · 최근 거래 없음".
+- Range row (`format.rangeView`): "Lowest for sale now" … "Highest" only when both ends are TCGplayer's own cheapest
+  and dearest listing; otherwise one centred "Usual prices" / "보통 가격" (Cardmarket averages; a 1-cent stray or a
+  999 placeholder replaced by the summary). Converted amounts carry ≈ / 약; real listings don't.
+- Source line "{source} · checked {when}" / "{when} 확인 · {source}" (it is when we checked, not when the price moved).
+  A plain mirror priced by Cardmarket on a card that also has a special pattern (`printing.isMixedMirror`) adds
+  "· all mirror patterns together" / "· 미러 무늬 전체 평균"; More prices repeats it over the Cardmarket numbers.
+- No price: 🔍 (64px; 44px on phones up to 720px tall), "No price yet", one line of text, and the "See eBay prices
+  below ↓" button whose text carries `FOLD_ATTR`. An unpriced Master Ball printing next to a priced one
+  (`printing.isRarePattern`) says "This pattern is rare. It’s usually worth more than the others."
+- Korean cards (route `ko`) show the Japanese card's price: `approx` puts ≈ / 약 on every amount (tiles and sheet
+  too) and the note under the panel says so.
+
+**"Which one is your card?" sheet** (`VariantHelp`, on `Sheet`)
+- Opened by "How to tell ›" (a 44px-tall text button, `aria-haspopup="dialog"`). The sentence before it is "The price
+  depends on the shiny pattern." when a mirror printing is among them, else "The price depends on which one you have."
+- One row per printing, a `<button aria-pressed>` that picks it and closes the sheet: our own 46×64 drawing, the full
+  name, one "how to tell" line (`printing.howToTell`; none for a sub-type we can't describe, such as Shadowless) and
+  the price.
+- The drawings are simple inline SVG shapes of our own, never card art: a flat card (not shiny), a rainbow picture
+  (holo), a rainbow body (mirror), and in the bottom half a circle with a band (a ball pattern), a circle with an "M"
+  (Master Ball), a circle with a spark (energy) or a circle with an "R" (Team Rocket); a small dot for a stamp
+  (`printing.patternArt`). Their colors are fixed (one-off art), the same in both themes.
+- Intro "Tilt your card in the light and look at the bottom half." when a row has a pattern mark, else "… and see
+  where it shines."; footer "The picture at the top may show a different pattern than your card."
+
+**Fold: the price stays on the first view** (`useFitArt` in CardScreen.tsx)
+- Elements that must be readable without scrolling carry `data-card-fold` (`FOLD_ATTR` from PriceHero): the big price,
+  the low–high row and the eBay hint (or the no-price panel's eBay button). CardScreen measures how far down they end
+  (minus the art) into `--card-fold-h`; the art takes the height that is left (`--card-art-min` 92px wide at least).
+- The panels of the card's **other** printings are rendered too, invisible and out of the flow (`.card-price-ghost`,
+  `visibility: hidden`), so the art is sized for the tallest panel from the start: **tiles never move when another
+  printing is picked**. The measured height also never goes down for a card.
+- When the art is down to its minimum the page is "tight": `data-tight="1"` on `.card-body` puts scroll-tile names
+  and the price label on one line and shortens the trend pill to "▲10%"; `"2"` also hides the printed-name line
+  (all still read by screen readers). Then it measures again.
+- Checked at 375×667, 390×844 (also with 47/34px safe areas) and 430×932, English + dollars and Korean + won: the
+  hint ends at least 3px above the Scan button's ring, tiles end 200px or more above the tab bar, and
+  `document.elementFromPoint` at each tile's center is that tile.
+
+**The pick is remembered**
+- Links carry it: `cardPath(item, item.variant)` → `/card/ja/SV8a-084?v=reverse-masterball` (My Cards tiles, Best
+  card, Recently viewed). The screen opens on a valid `?v=`, else the only printing of the card saved in My Cards,
+  else `card.defaultVariant` (`printing.startVariant`).
+- Recently viewed stores the printing last looked at with its price (`pushHistory(card, price, approx, variantKey)`,
+  when the pick or its price changes), and the eBay words follow it (`ebayQuery(card, variantKey)`: Master Ball adds
+  "master ball").
+- After a scan, once per session, a 5s toast "✨ Shiny card? Tap its pattern to see the right price." when the screen
+  shows the default printing and a shinier one costs 3× or more (`printing.hasShinyUpgrade`).
 
 ## Strings (i18n)
 
@@ -202,6 +304,7 @@ the name (`nameInUiLang`). English counts need a singular string: `count1: '1 ca
 import { Link, navigate, goBack, useRoute } from '../lib/router';
 <Link to="/settings" className="btn btn-icon btn-ghost" aria-label={t('settings')}><Icon name="settings" /></Link>
 navigate(`/card/${card.lang}/${encodeURIComponent(card.id)}`);
+<Link to={cardPath(item, item.variant)}>…</Link>      // card/format.ts: "/card/ja/SV8a-084?v=reverse-masterball"
 navigate(`/search?q=${encodeURIComponent(q)}&lang=${lang}`);
 navigate('/card/ja/SV8a-084', { replace: true });     // e.g. scan result: Back skips the scan screen
 const { segments, query } = useRoute();               // query.get('q')
@@ -222,6 +325,31 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 | Loading price | 가격 확인 중… | Checking prices… |
 | Not found | 음… 못 찾았어요 🤔 다시 찍거나 이름을 써 볼까요? | Hmm, can't find it 🤔 Try again or type the name. |
 | No price | 아직 가격이 없어요. 수수께끼 카드! 🔍 | No price yet. This card is still a mystery! 🔍 |
+| No price, rare pattern (Master Ball) | 드문 무늬예요. 보통 다른 무늬보다 비싸요. | This pattern is rare. It’s usually worth more than the others. |
+| No price: way down to eBay | 아래에서 eBay 가격 보기 ↓ | See eBay prices below ↓ |
+| Printing tiles (group label; visible from 880px tall) | 내 카드는 어떤 거예요? | Which one is your card? |
+| Tile without a price | 가격 없음 | No price |
+| Printing names | 기본 · 홀로 · 리버스 홀로 · 미러 · 몬스터볼 미러 · 마스터볼 미러 · 에너지 미러 · 러브러브볼 미러 · 퀵볼 미러 · 다크볼 미러 · 프렌드볼 미러 · 로켓단 미러 | Normal · Holo · Reverse Holo · Mirror · Poké Ball mirror · Master Ball mirror · Energy mirror · Love Ball mirror · Quick Ball mirror · Dusk Ball mirror · Friend Ball mirror · Team Rocket mirror |
+| Line under the price panel | 반짝이 무늬에 따라 가격이 달라요. 구별하는 법 › (no mirror printing: 어떤 카드인지에 따라 가격이 달라요.) | The price depends on the shiny pattern. How to tell › (no mirror printing: The price depends on which one you have.) |
+| Help sheet intro | 카드를 빛에 살짝 기울여서 아래쪽을 봐요. (no pattern marks: … 어디가 반짝이는지 봐요.) | Tilt your card in the light and look at the bottom half. (no pattern marks: … and see where it shines.) |
+| How to tell: Normal | 반짝이지 않아요. (+ 볼 무늬가 없어요. when a sibling has a ball pattern) | Not shiny. (+ No ball pattern.) |
+| How to tell: Holo | 그림만 반짝여요. | Only the picture is shiny. |
+| How to tell: Mirror / Reverse Holo | 그림만 빼고 다 반짝여요. | Shiny all over, except the picture. |
+| How to tell: Poké Ball mirror | 반짝이고 몬스터볼 무늬가 있어요. | Shiny, with a Poké Ball pattern. |
+| How to tell: Master Ball mirror | 반짝이고 볼에 M이 있어요. 드물어요! | Shiny, and the ball has an M on it. Rare! |
+| How to tell: Energy mirror | 반짝이고 큰 에너지 마크가 있어요. | Shiny, with one big energy symbol. |
+| How to tell: other balls | 반짝이고 {ball} 무늬가 있어요. | Shiny, with a {ball} pattern. |
+| How to tell: Team Rocket mirror | 반짝이고 큰 R 무늬가 있어요. | Shiny, with a big R. |
+| How to tell: 1st Edition · stamped · jumbo | 작은 1st 에디션 마크가 있어요. · 도장이 하나 더 찍혀 있어요. · 다른 카드보다 훨씬 큰 카드예요. | Has a small 1st Edition mark. · Has an extra stamp on it. · A giant card, much bigger than the others. |
+| Help sheet footer | 맨 위 그림은 내 카드와 무늬가 다를 수 있어요. | The picture at the top may show a different pattern than your card. |
+| Asking price (no recent sales) | 파는 사람이 부른 가격 · 약 16,300원 · TCGplayer · 최근 거래 없음 (bar tag: 부른 가격) | Asking price · ≈ $12.00 · TCGplayer · no recent sales (bar tag: Asking) |
+| Price range | 지금 파는 최저가 … 최고가 (both real listings) / 보통 가격 (everything else) | Lowest for sale now … Highest / Usual prices |
+| Source line | 3시간 전 확인 · TCGplayer | TCGplayer · checked 3h ago |
+| Mirror price for all patterns together | … · Cardmarket (유로 → 원 환산) · 미러 무늬 전체 평균 | Cardmarket (€ → $) · all mirror patterns together · … |
+| Korean card | 일본판 카드 가격이에요. 한글판은 다를 수 있어요. | Price of the Japanese card. Korean cards can be different. |
+| After a scan (toast, once a session) | 반짝이는 카드예요? 무늬를 고르면 딱 맞는 가격이 나와요. | Shiny card? Tap its pattern to see the right price. |
+| More prices notes | 너무 높아서 뺐어요 · 너무 낮아서 뺐어요 · 최근 거래 없음 · 미러 무늬 전체 평균 | Ignored: too high · Ignored: too low · No recent sales · All mirror patterns together |
+| Settings credit (TCGCSV) | 일본 카드 가격 (TCGplayer, 하루 한 번) | Japanese card prices (TCGplayer, once a day) |
 | Offline | 인터넷이 없어요. 내 카드는 안전해요. | No internet. Your cards are safe here. |
 | Camera denied | 카메라가 꺼져 있어요. 사진을 고르거나 직접 입력해요. | Camera is off. Use a photo or type instead. |
 | Wrong card | 다른 카드예요? | Not this card? |
@@ -244,7 +372,8 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 - Enter with `.pop-in` / `.fade-in`; price counts up (`<Money animate>`); a scanned card of the `rare` tier ($5 / 5,000원) or better gets `<Confetti>`; every
   tier gets a glow in its color.
   Global CSS shortens all animation under `prefers-reduced-motion`; don't add JS motion without checking it.
-- Icon-only buttons need `aria-label`. Toggle chips use `aria-pressed`. Use `<button>` for actions, `<Link>` for
+- Icon-only buttons need `aria-label`. Toggle chips use `aria-pressed`; the Card screen's printing tiles add a ring
+  and a corner check, so the picked one is never marked by color alone. Use `<button>` for actions, `<Link>` for
   navigation, `<ExternalLink site="eBay">` for eBay/TCGplayer and `<ExternalLink kind="site" site="GitHub">` for any
   other website (a button with `role="link"`; never a bare `target="_blank"` link or `<a href>` out of the app: kids get
   the grown-up check first).

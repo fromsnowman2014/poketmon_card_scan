@@ -9,7 +9,7 @@ import { useStrings, useUiLang, type Strings } from '../../lib/i18n';
 import { Link } from '../../lib/router';
 import { removeFromCollection, setQuantity } from '../../lib/store';
 import type { CollectionItem } from '../../lib/types';
-import { variantLabel } from '../card/format';
+import { cardPath, foilOf, variantLabel } from '../card/format';
 import { itemNames } from './itemName';
 
 type Key =
@@ -57,17 +57,20 @@ const STRINGS: Strings<Key> = {
 interface TileProps {
   item: CollectionItem;
   photo?: string;
-  /** Show which printing it is (the same card is saved in more than one). */
-  showVariant: boolean;
+  /** Saved printings of this card (this one included). */
+  siblings: readonly string[];
   editing: boolean;
   onRemove: (item: CollectionItem) => void;
 }
 
-function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
+function Tile({ item, photo, siblings, editing, onRemove }: TileProps) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
   const tierOf = useValueTier();
   const tier = item.priceUsd === null ? null : tierOf(item.priceUsd);
+  // Says which printing it is when the same card is saved in more than one, or when it is a special pattern
+  // (Master Ball mirror…): its price is far from the usual card's.
+  const showVariant = siblings.length > 1 || !!foilOf(item.variant);
   // Same name order as the Card screen title: "루차불" over "ルチャブル" in Korean; the set when there is no second name.
   const { title, subtitle } = itemNames(item, lang);
   const body: ReactNode = (
@@ -81,7 +84,9 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
           size="thumb"
           code={{ set: item.setId, number: item.localId }}
         />
-        {showVariant && <span className="collection-variant">{variantLabel(item.variant, lang)}</span>}
+        {showVariant && (
+          <span className="collection-variant">{variantLabel(item.variant, lang, { cardLang: item.lang, siblings })}</span>
+        )}
         {item.qty > 1 && !editing && <span className="collection-qty">×{item.qty}</span>}
       </span>
       <span className="collection-name truncate">{title}</span>
@@ -98,7 +103,7 @@ function Tile({ item, photo, showVariant, editing, onRemove }: TileProps) {
       {editing ? (
         <div className="collection-card">{body}</div>
       ) : (
-        <Link to={`/card/${item.lang}/${encodeURIComponent(item.id)}`} className="collection-card">
+        <Link to={cardPath(item, item.variant)} className="collection-card">
           {body}
         </Link>
       )}
@@ -155,10 +160,11 @@ export function CardGrid({ items, thumbs, editing }: CardGridProps) {
   const t = useStrings(STRINGS);
   const lang = useUiLang();
   const [removing, setRemoving] = useState<CollectionItem | null>(null);
+  // Saved printings per card. Names only know these, not every printing the card has.
   const variantsOf = useMemo(() => {
-    const count = new Map<string, number>();
-    for (const i of items) count.set(`${i.lang}:${i.id}`, (count.get(`${i.lang}:${i.id}`) ?? 0) + 1);
-    return count;
+    const keys = new Map<string, string[]>();
+    for (const i of items) keys.set(`${i.lang}:${i.id}`, [...(keys.get(`${i.lang}:${i.id}`) ?? []), i.variant]);
+    return keys;
   }, [items]);
 
   const confirmRemove = () => {
@@ -176,7 +182,7 @@ export function CardGrid({ items, thumbs, editing }: CardGridProps) {
             key={item.key}
             item={item}
             photo={thumbs[item.key]}
-            showVariant={(variantsOf.get(`${item.lang}:${item.id}`) ?? 0) > 1}
+            siblings={variantsOf.get(`${item.lang}:${item.id}`) ?? []}
             editing={editing}
             onRemove={setRemoving}
           />

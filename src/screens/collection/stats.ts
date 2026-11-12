@@ -76,10 +76,13 @@ export function bestItem(items: readonly CollectionItem[]): CollectionItem | und
   return best;
 }
 
-/** The stalest price check: "updated 3 days ago" is true for every card once this is recent. */
+/**
+ * The stalest price check: "updated 3 days ago" is true for every card once this is recent. Cards without a price
+ * don't count: there is nothing to be out of date, and a check that finds no price leaves their time alone.
+ */
 export function oldestUpdate(items: readonly CollectionItem[]): string | undefined {
   return items.reduce<string | undefined>(
-    (min, i) => (!min || i.priceUpdatedAt < min ? i.priceUpdatedAt : min),
+    (min, i) => (i.priceUsd !== null && (!min || i.priceUpdatedAt < min) ? i.priceUpdatedAt : min),
     undefined,
   );
 }

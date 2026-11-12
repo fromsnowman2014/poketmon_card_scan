@@ -1,28 +1,33 @@
 // Pure display helpers for the Card screen (kept apart from React so they are unit-tested).
 import { nameInUiLang } from '../../lib/localName';
 import { findSpecies, translateCardName } from '../../lib/names';
-import type { CardDetail, CardLang, UiLang } from '../../lib/types';
+import type { CardDetail, CardLang, PriceSummary, TcgplayerPrice, UiLang } from '../../lib/types';
 
 /** Changes smaller than this (percent) get no up/down pill. */
 const TREND_THRESHOLD = 5;
 
-const VARIANT_LABELS: Record<UiLang, Record<string, string>> = {
-  ko: {
-    normal: '기본',
-    reverse: '리버스 홀로',
-    'reverse-pokeball': '몬스터볼 미러',
-    'reverse-masterball': '마스터볼 미러',
-    holo: '홀로',
-    firstEdition: '1st 에디션',
-  },
-  en: {
-    normal: 'Normal',
-    reverse: 'Reverse Holo',
-    'reverse-pokeball': 'Poké Ball mirror',
-    'reverse-masterball': 'Master Ball mirror',
-    holo: 'Holo',
-    firstEdition: '1st Edition',
-  },
+/** Printings every card can have. A plain `reverse` reads differently on Japanese / Korean cards (reverseName). */
+const BASE_LABELS: Record<UiLang, Record<string, string>> = {
+  ko: { normal: '기본', reverse: '리버스 홀로', holo: '홀로', firstEdition: '1st 에디션' },
+  en: { normal: 'Normal', reverse: 'Reverse Holo', holo: 'Holo', firstEdition: '1st Edition' },
+};
+
+/** Mirror patterns as TCGdex spells the foil → the pattern's name (Korean: the ball names used in the Korean games). */
+const FOIL_NAMES: Record<string, Record<UiLang, string>> = {
+  pokeball: { ko: '몬스터볼', en: 'Poké Ball' },
+  masterball: { ko: '마스터볼', en: 'Master Ball' },
+  energy: { ko: '에너지', en: 'Energy' },
+  loveball: { ko: '러브러브볼', en: 'Love Ball' },
+  quickball: { ko: '퀵볼', en: 'Quick Ball' },
+  duskball: { ko: '다크볼', en: 'Dusk Ball' },
+  friendball: { ko: '프렌드볼', en: 'Friend Ball' },
+  'team-rocket': { ko: '로켓단', en: 'Team Rocket' },
+};
+
+/** "Master Ball" + this = the full name of a pattern printing; alone (capitalized) a Japanese card's plain mirror. */
+const MIRROR: Record<UiLang, { word: string; alone: string }> = {
+  ko: { word: '미러', alone: '미러' },
+  en: { word: 'mirror', alone: 'Mirror' },
 };
 
 /** "1999-2000-copyright" → "1999–2000 Copyright". */
@@ -71,18 +76,80 @@ function detailLabel(rest: string, lang: UiLang): string {
   return parts.join(' · ');
 }
 
+/** What a label needs to know about the card besides the key. Without it (old saved items) names stay generic. */
+export interface VariantLabelContext {
+  /** Language of the card: Japanese and Korean cards call a reverse holo a "mirror". */
+  cardLang?: CardLang;
+  /** Keys of all the card's printings (this one may be among them). */
+  siblings?: readonly string[];
+}
+
+/** The mirror pattern in a key: "reverse-masterball-2" → "masterball", "reverse-heavyball" → "heavyball"; else undefined. */
+export function foilOf(key: string): string | undefined {
+  if (!key.startsWith('reverse-')) return undefined;
+  const rest = key.slice('reverse-'.length);
+  return Object.keys(FOIL_NAMES).find((f) => rest === f || rest.startsWith(`${f}-`)) ?? /^[a-z]+ball(?=-|$)/.exec(rest)?.[0];
+}
+
+/** "Poké Ball", "러브러브볼"; a ball we have no name for is spelled out ("heavyball" → "Heavy Ball"). */
+export function foilName(foil: string, lang: UiLang): string {
+  return FOIL_NAMES[foil]?.[lang] ?? humanize(foil.replace(/ball$/, '-ball'));
+}
+
 /**
- * Kid-friendly name of a variant key. Unknown keys reuse the longest known prefix and describe the rest:
- * "holo-shadowless" → "Holo · Shadowless", "reverse-stamp-gamestop" → "리버스 홀로 · GameStop 스탬프",
- * "normal-jumbo" → "기본 · 점보 카드".
+ * True when a Japanese / Korean card's plain mirror is its Poké Ball pattern: the card also has a special pattern
+ * (Master Ball, energy, Love Ball…) and no printing named Poké Ball. In those sets (SV8a, M2a) shops sell the plain
+ * mirror as "Poké Ball pattern"; elsewhere it is just the mirror.
  */
-export function variantLabel(key: string, lang: UiLang): string {
-  const labels = VARIANT_LABELS[lang];
-  if (labels[key]) return labels[key];
-  const base = Object.keys(labels)
-    .filter((k) => key.startsWith(`${k}-`))
-    .sort((a, b) => b.length - a.length)[0];
-  return base ? `${labels[base]} · ${detailLabel(key.slice(base.length + 1), lang)}` : detailLabel(key, lang);
+export function plainMirrorIsPokeBall({ cardLang, siblings = [] }: VariantLabelContext = {}): boolean {
+  if (cardLang !== 'ja' && cardLang !== 'ko') return false;
+  const foils = siblings.map(foilOf);
+  return foils.some((f) => f !== undefined && f !== 'pokeball') && !foils.includes('pokeball');
+}
+
+/** A plain `reverse`: "Reverse Holo" on English cards (and when the language is unknown), a mirror on JA/KO ones. */
+function reverseName(lang: UiLang, short: boolean, ctx: VariantLabelContext): string {
+  if (ctx.cardLang !== 'ja' && ctx.cardLang !== 'ko') return BASE_LABELS[lang].reverse;
+  return plainMirrorIsPokeBall(ctx) ? patternName('pokeball', lang, short) : MIRROR[lang].alone;
+}
+
+/** "Master Ball mirror" / "마스터볼 미러"; on a tile just "Master Ball" / "마스터볼". */
+function patternName(foil: string, lang: UiLang, short: boolean): string {
+  return short ? foilName(foil, lang) : `${foilName(foil, lang)} ${MIRROR[lang].word}`;
+}
+
+function label(key: string, lang: UiLang, short: boolean, ctx: VariantLabelContext): string {
+  const foil = foilOf(key);
+  const base = foil
+    ? `reverse-${foil}`
+    : Object.keys(BASE_LABELS[lang])
+        .filter((k) => key === k || key.startsWith(`${k}-`))
+        .sort((a, b) => b.length - a.length)[0];
+  if (!base) return detailLabel(key, lang);
+  const name = foil ? patternName(foil, lang, short) : base === 'reverse' ? reverseName(lang, short, ctx) : BASE_LABELS[lang][base];
+  return key === base ? name : `${name} · ${detailLabel(key.slice(base.length + 1), lang)}`;
+}
+
+/**
+ * Kid-friendly name of a variant key: "Normal", "Holo", "1st Edition", "Master Ball mirror", "에너지 미러". A plain
+ * `reverse` is "Reverse Holo" / "리버스 홀로" on English cards and "Mirror" / "미러" on Japanese and Korean ones, or
+ * "Poké Ball mirror" / "몬스터볼 미러" there when that is what it is (plainMirrorIsPokeBall). Unknown keys reuse the
+ * longest known prefix and describe the rest: "holo-shadowless" → "Holo · Shadowless", "reverse-stamp-gamestop" →
+ * "리버스 홀로 · GameStop 스탬프", "normal-jumbo" → "기본 · 점보 카드".
+ */
+export function variantLabel(key: string, lang: UiLang, ctx: VariantLabelContext = {}): string {
+  return label(key, lang, false, ctx);
+}
+
+/** The name on a picker tile: variantLabel without the word "mirror" on pattern printings ("Master Ball", "몬스터볼"). */
+export function variantShortLabel(key: string, lang: UiLang, ctx: VariantLabelContext = {}): string {
+  return label(key, lang, true, ctx);
+}
+
+/** In-app path of a card, opening on one printing when given: "/card/ja/SV8a-084?v=reverse-masterball". */
+export function cardPath(card: { lang: CardLang; id: string }, variantKey?: string): string {
+  const path = `/card/${card.lang}/${encodeURIComponent(card.id)}`;
+  return variantKey ? `${path}?v=${encodeURIComponent(variantKey)}` : path;
 }
 
 /** Where `market` sits between `low` and `high`, 0..1 (centered when the range is empty). */
@@ -102,6 +169,30 @@ export function rangeMarker(low: number, high: number, market: number): number |
   if (![low, high, market].every(Number.isFinite) || !(high > low)) return null;
   const pos = rangePosition(low, high, market);
   return pos <= RANGE_END || pos >= 1 - RANGE_END ? null : pos;
+}
+
+/**
+ * What the row under the big price shows.
+ * - `range`: two amounts with a bar or "–" between them. Labels `ends` ("Lowest for sale now" … "Highest") only when
+ *   both are TCGplayer's own cheapest and dearest listing; `usual` (one "Usual prices" label) for everything else:
+ *   Cardmarket averages, or ends the summary had to replace (a 1-cent stray, a 999 placeholder).
+ * - `single`: no spread to draw, but TCGplayer's cheapest listing still answers "how cheap can I buy it now".
+ * - `none`: nothing worth a row.
+ */
+export type RangeView =
+  | { kind: 'none' }
+  | { kind: 'single'; low: number }
+  | { kind: 'range'; labels: 'ends' | 'usual'; low: number; high: number; marker: number | null };
+
+export function rangeView(summary: PriceSummary, tcg: TcgplayerPrice | null | undefined): RangeView {
+  const { market, low, high } = summary;
+  if (market === null) return { kind: 'none' };
+  const listed = summary.source === 'tcgplayer' && !!tcg;
+  if (low === null || high === null || !(high > low)) {
+    return listed && low !== null && low === tcg.low ? { kind: 'single', low } : { kind: 'none' };
+  }
+  const labels = listed && low === tcg.low && high === tcg.high ? 'ends' : 'usual';
+  return { kind: 'range', labels, low, high, marker: rangeMarker(low, high, market) };
 }
 
 export type Trend = 'up' | 'down';

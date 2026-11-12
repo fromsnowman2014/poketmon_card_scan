@@ -3,8 +3,11 @@ import type { CardDetail, CollectionItem } from '../../lib/types';
 
 const getCard = vi.fn();
 const updateCollectionPrice = vi.fn();
+/** Live rates: 2 dollars a euro, unlike whatever the card was fetched with. */
+const LIVE = { EUR: 0.5, KRW: 1400, fetchedAt: '2026-11-08T11:00:00.000Z' };
 vi.mock('../../lib/tcgdex', () => ({ getCard: (...args: unknown[]) => getCard(...args) }));
 vi.mock('../../lib/store', () => ({ updateCollectionPrice: (...args: unknown[]) => updateCollectionPrice(...args) }));
+vi.mock('../../lib/fx', async (original) => ({ ...(await original<typeof import('../../lib/fx')>()), getRates: async () => LIVE }));
 
 let mod: typeof import('./useRefreshPrices');
 
@@ -30,9 +33,20 @@ function item(id: string, variant: string, priceUsd: number | null, checkedHours
   };
 }
 
-const card = (prices: Record<string, number>, converted = false) =>
+/**
+ * A card as getCard returns it: each printing priced by TCGplayer (dollars) or, with `eur`, by Cardmarket (euros), and
+ * a summary made with the rates of fetch time (here: a stale number the refresh must not store).
+ */
+const card = (prices: Record<string, number>, eur = false) =>
   ({
-    variants: Object.entries(prices).map(([key, market]) => ({ key, type: key, summary: { market, converted } })),
+    variants: Object.entries(prices).map(([key, n]) => ({
+      key,
+      type: key,
+      ...(eur
+        ? { cardmarket: { avg: null, low: null, trend: n, avg1: null, avg7: null, avg30: null } }
+        : { tcgplayer: { low: null, mid: null, high: null, market: n, directLow: null } }),
+      summary: { market: eur ? 999 : n, low: null, high: null, changePct: null, source: eur ? 'cardmarket' : 'tcgplayer', converted: eur },
+    })),
   }) as unknown as CardDetail;
 
 beforeEach(async () => {
@@ -43,25 +57,27 @@ beforeEach(async () => {
 });
 
 describe('refreshPrices', () => {
-  it('fetches each card once for all its saved variants and keeps the last price when a variant lost it', async () => {
+  it('fetches each card once for all its saved variants and writes nothing for a variant without a price', async () => {
     getCard.mockResolvedValue(card({ normal: 0.5 }));
-    const r = await mod.refreshPrices([item('A', 'normal', 0.4, 1), item('A', 'reverse', 2, 1)]);
+    const r = await mod.refreshPrices([item('A', 'normal', 0.4, 1), item('A', 'reverse', 2, 1), item('A', 'holo', null, 1)]);
     expect(r).toEqual({ failed: 0 });
     expect(getCard).toHaveBeenCalledTimes(1);
-    expect(updateCollectionPrice.mock.calls).toEqual([
-      ['ja:A:normal', 0.5, false],
-      ['ja:A:reverse', 2, false],
-    ]);
+    // The reverse keeps its saved $2 and the time it was checked; the unpriced holo stays unpriced.
+    expect(updateCollectionPrice.mock.calls).toEqual([['ja:A:normal', 0.5, false]]);
   });
 
-  it('passes on whether the price was converted from EUR (≈), and keeps the old flag with the old price', async () => {
+  it('converts euro prices with the live rates and marks them approximate (≈)', async () => {
     getCard.mockResolvedValue(card({ normal: 0.5 }, true));
-    const kept = { ...item('A', 'reverse', 2, 1), priceApprox: true };
-    await mod.refreshPrices([item('A', 'normal', 0.4, 1), kept]);
-    expect(updateCollectionPrice.mock.calls).toEqual([
-      ['ja:A:normal', 0.5, true],
-      ['ja:A:reverse', 2, true],
-    ]);
+    await mod.refreshPrices([item('A', 'normal', 0.4, 1)]);
+    expect(updateCollectionPrice.mock.calls).toEqual([['ja:A:normal', 1, true]]); // €0.50 at 2 dollars a euro
+  });
+
+  it('marks an asking price (TCGplayer listings, no recent sales) approximate too', async () => {
+    const asking = card({ normal: 1 });
+    asking.variants[0].tcgplayer = { low: 5, mid: 6, high: 7, market: null, directLow: null, asking: true };
+    getCard.mockResolvedValue(asking);
+    await mod.refreshPrices([item('A', 'normal', 0.4, 1)]);
+    expect(updateCollectionPrice.mock.calls).toEqual([['ja:A:normal', 6, true]]);
   });
 
   it('counts failures and lets concurrent manual calls share one run', async () => {
@@ -94,6 +110,22 @@ describe('automatic refresh', () => {
     getCard.mockClear();
     await mod.autoRefreshPrices(items, NOW + HOUR);
     expect(getCard).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fetch a card again within a day after a lookup that found no price for it', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    try {
+      getCard.mockResolvedValue(card({ normal: 2 }));
+      const unpriced = item('A', 'reverse', null, 30);
+      expect(mod.staleItems([unpriced], NOW)).toEqual([unpriced]);
+      await mod.autoRefreshPrices([unpriced], NOW);
+      expect(updateCollectionPrice).not.toHaveBeenCalled();
+      expect(mod.staleItems([unpriced], NOW + 2 * HOUR)).toEqual([]);
+      expect(mod.autoRefreshPrices([unpriced], NOW + 2 * HOUR)).toBeUndefined();
+      expect(mod.staleItems([unpriced], NOW + 25 * HOUR)).toEqual([unpriced]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('does nothing when every price is fresh', () => {

@@ -20,6 +20,9 @@ type Key =
   | 'avg7'
   | 'avg30'
   | 'ignored'
+  | 'ignoredLow'
+  | 'noSales'
+  | 'mixedMirror'
   | 'openTcgplayer'
   | 'ebayQuery'
   | 'workerHint';
@@ -39,6 +42,9 @@ const STRINGS: Strings<Key> = {
     avg7: '7일 평균',
     avg30: '30일 평균',
     ignored: '너무 높아서 뺐어요',
+    ignoredLow: '너무 낮아서 뺐어요',
+    noSales: '최근 거래 없음',
+    mixedMirror: '미러 무늬 전체 평균',
     openTcgplayer: 'TCGplayer에서 보기',
     ebayQuery: 'eBay 검색어: {q}',
     workerHint: '부모님이 설정에서 eBay 실시간 가격을 켤 수 있어요.',
@@ -57,6 +63,9 @@ const STRINGS: Strings<Key> = {
     avg7: '7-day avg',
     avg30: '30-day avg',
     ignored: 'Ignored: too high',
+    ignoredLow: 'Ignored: too low',
+    noSales: 'No recent sales',
+    mixedMirror: 'All mirror patterns together',
     openTcgplayer: 'Open on TCGplayer',
     ebayQuery: 'eBay search words: {q}',
     workerHint: 'A grown\u2011up can turn on live eBay prices in Settings.',
@@ -111,6 +120,8 @@ export interface MorePricesProps {
   variant: CardVariant;
   /** Name of the selected variant, shown when the card has several. */
   variantName?: string;
+  /** The Cardmarket numbers are for all mirror patterns of the card together (printing.isMixedMirror). */
+  mixedMirror?: boolean;
   /** The words the eBay links search for (for grown-ups checking the results). */
   ebayQuery?: string;
   /** Tell grown-ups that live eBay prices can be turned on in Settings (no worker set up). */
@@ -121,14 +132,16 @@ export interface MorePricesProps {
  * Raw source numbers for grown-ups: TCGplayer (USD) and Cardmarket (EUR), unconverted, plus eBay details. With won
  * prices, one line gives today's dollar-to-won rate so the dollar numbers here can be compared.
  */
-export function MorePrices({ variant, variantName, ebayQuery, workerHint }: MorePricesProps) {
+export function MorePrices({ variant, variantName, mixedMirror, ebayQuery, workerHint }: MorePricesProps) {
   const t = useStrings(STRINGS);
   const { currency, uiLang } = useSettings();
   const rates = useRates();
   const { tcgplayer: tcg, cardmarket: cm, tcgplayerId, summary } = variant;
   if (!tcg && !cm && !tcgplayerId && !ebayQuery && !workerHint) return null;
-  // TCGplayer's raw high is often a 999 placeholder listing that the headline range leaves out.
-  const highIgnored = summary?.source === 'tcgplayer' && tcg?.high != null && summary.high !== tcg.high;
+  // The headline range leaves out TCGplayer's stray ends: a 999 placeholder listing, a lone 1-cent copy.
+  const headline = summary?.source === 'tcgplayer' ? summary : null;
+  const highIgnored = !!headline && tcg?.high != null && headline.high !== tcg.high;
+  const lowIgnored = !!headline && tcg?.low != null && headline.low !== null && tcg.low < headline.low;
 
   return (
     <details className="surface card-more">
@@ -147,9 +160,10 @@ export function MorePrices({ variant, variantName, ebayQuery, workerHint }: More
             {tcg && (
               <PriceGrid
                 rows={[
-                  [t('low'), usd(tcg.low)],
+                  [t('low'), usd(tcg.low), lowIgnored ? t('ignoredLow') : undefined],
                   [t('mid'), usd(tcg.mid)],
-                  [t('market'), usd(tcg.market)],
+                  // No sales lately: the headline is an asking price (the middle or the cheapest listing).
+                  [t('market'), usd(tcg.market), tcg.asking ? t('noSales') : undefined],
                   [t('high'), usd(tcg.high), highIgnored ? t('ignored') : undefined],
                 ]}
               />
@@ -171,6 +185,7 @@ export function MorePrices({ variant, variantName, ebayQuery, workerHint }: More
             <h3 className="card-more-source">
               Cardmarket <span className="caption muted">{t('eur')}</span>
             </h3>
+            {mixedMirror && <p className="caption muted">{t('mixedMirror')}</p>}
             <PriceGrid
               rows={[
                 [t('avg'), eur(cm.avg)],

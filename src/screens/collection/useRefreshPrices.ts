@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { getRates } from '../../lib/fx';
+import { applyRates, isApproxPrice } from '../../lib/pricing';
 import { updateCollectionPrice } from '../../lib/store';
 import { getCard } from '../../lib/tcgdex';
 import type { CollectionItem } from '../../lib/types';
@@ -25,6 +27,11 @@ const AUTO_KEY = 'cc:pricesAutoRefreshedAt';
 let progress: RefreshProgress | null = null;
 let current: { run: Promise<{ failed: number }>; background: boolean } | null = null;
 let autoAtMemory = 0;
+/**
+ * When a saved card was looked up without getting a price to store (this app session). Its saved time stays as it
+ * was, so without this it would look stale, and be fetched again, every hour.
+ */
+const lookedUpAt = new Map<string, number>();
 const listeners = new Set<() => void>();
 
 function setProgress(next: RefreshProgress | null): void {
@@ -67,16 +74,19 @@ async function run(items: readonly CollectionItem[], concurrency: number): Promi
   let done = 0;
   let failed = 0;
   setProgress({ done, total });
+  // getCard converts euro prices with the rates it had when it fetched the card; saved prices use live ones, like
+  // the Card screen. Never rejects (falls back to the last known rates) and is asked for once, next to the cards.
+  const live = getRates();
 
   const worker = async () => {
     for (let group = queue.shift(); group; group = queue.shift()) {
       try {
-        const card = await getCard(group[0].lang, group[0].id);
+        const card = applyRates(await getCard(group[0].lang, group[0].id), await live);
         for (const item of group) {
-          // A variant that lost its price keeps the last known one rather than dropping to "no price".
           const summary = card.variants.find((v) => v.key === item.variant)?.summary;
-          if (summary?.market != null) updateCollectionPrice(item.key, summary.market, summary.converted);
-          else updateCollectionPrice(item.key, item.priceUsd, !!item.priceApprox);
+          // A printing without a price right now writes nothing: the saved price and its time stay as they are.
+          if (summary?.market != null) updateCollectionPrice(item.key, summary.market, isApproxPrice(summary));
+          else lookedUpAt.set(item.key, Date.now());
         }
       } catch {
         failed++;
@@ -109,9 +119,12 @@ export async function refreshPrices(
   return promise;
 }
 
-/** Saved cards whose price was last checked more than a day ago (or at an unreadable time). */
-export function staleItems<T extends Pick<CollectionItem, 'priceUpdatedAt'>>(items: readonly T[], now = Date.now()): T[] {
-  return items.filter((i) => !(now - Date.parse(i.priceUpdatedAt) < STALE_MS));
+/**
+ * Saved cards whose price was last checked more than a day ago (or at an unreadable time). A card that was looked up
+ * since without a price to store counts from that lookup.
+ */
+export function staleItems<T extends Pick<CollectionItem, 'key' | 'priceUpdatedAt'>>(items: readonly T[], now = Date.now()): T[] {
+  return items.filter((i) => !(now - Date.parse(i.priceUpdatedAt) < STALE_MS) && !(now - (lookedUpAt.get(i.key) ?? NaN) < STALE_MS));
 }
 
 /**

@@ -69,44 +69,74 @@ navigation uses `history.pushState(state, '')` **without changing the URL**; the
 | `/` | Home: big "Scan a card" button, search box, collection value, recently viewed |
 | `/scan` | Camera viewfinder or a photo → OCR → the card (when sure) or "Is this your card?" candidates → typed number |
 | `/search?q=<text>&lang=<en|ja|ko>` | Name / number search results grid |
-| `/card/<lang>/<id>` | Result screen (layout below): art, name, chips, price hero (시세 + low/high), variant picker, add to My Cards, eBay, More prices. `?from=scan` (set by the Scan screen) fires confetti for 용돈 카드 or more ($5 / 5,000원, in the money shown) |
+| `/card/<lang>/<id>` | Result screen (layout below): art, name, chips, printing tiles, price panel (시세 + low/high), add to My Cards, eBay, More prices. `?v=<variantKey>` opens on that printing (links from My Cards, Best card and Recent carry it; an unknown key falls back). `?from=scan` (set by the Scan screen) fires confetti for 용돈 카드 or more ($5 / 5,000원, in the money shown) and may show the "shiny card?" toast |
 | `/collection` | My Cards: total value, since last week, best card, cards by price, grid (edit mode), refresh prices |
 | `/settings` | Where you live (🇺🇸 / 🇰🇷: sets the money and search language), UI language, money (follows the country; a grown-up can override it), theme, default search language, optional eBay worker URL (label exactly "eBay 워커 주소" / "eBay worker URL": worker/README.md points parents to it), install guide, reset, data credits |
 
 ### Card screen layout
-Top to bottom, so that the price is the first thing under the card on every phone:
+Top to bottom. The kid picks the printing first, then reads its price; both are in the first view on every phone.
+The details (tile sizes, names, copy) are in [UI-KIT.md](UI-KIT.md#card-screen-printings-and-the-price-panel).
 1. Card art — sized so the price fits the first view: `useFitArt` (CardScreen.tsx) measures everything from the page top to
-   the end of the elements marked `FOLD_ATTR` (the big price, the low–high row and the eBay hint) except the art itself, and hands it to
-   CSS as `--card-fold-h`; `.card-art` takes the height that is left above the tab bar and the raised Scan button (at least
-   92 px wide, up to 46% of the width / 220 px on tall phones; ~128 px on an iPhone SE). Re-measured on every resize (fonts,
-   another variant). Tap to zoom (Sheet). With no picture, `CardImage code` prints set + number on the card back.
+   the end of the elements marked `FOLD_ATTR` (the big price, the low–high row and the eBay hint; in the no-price panel
+   its eBay button) except the art itself, and hands it to CSS as `--card-fold-h`; `.card-art` takes the height that is
+   left above the tab bar and the raised Scan button (at least `--card-art-min` = 92 px wide, up to 46% of the width /
+   220 px on tall phones). The panels of the card's **other** printings are rendered too, invisible and out of the flow
+   (`.card-price-ghost`), and count in the measurement: the art is sized once for the tallest panel, so the tiles never
+   move under a finger. The number only goes up for a card and starts over when the width changes. When the art is at
+   its minimum and the page still doesn't fit, `data-tight="1"` (then `"2"`) on the body lets CSS drop a line: one-line
+   tile names and price label, a shorter trend pill, then no printed-name subtitle (all still read by screen readers).
+   Tap the art to zoom (Sheet). With no picture, `CardImage code` prints set + number on the card back.
+   The real panel is `.card-price-slot > .card-price` (`querySelectorAll('.card-price')` also finds the invisible ones).
 2. Title: the name in the UI language for JA/KO cards ("루차불" / "Hawlucha") with the printed name under it
    ("ルチャブル"); EN cards keep the English name (+ Korean name under it in the Korean UI). `format.cardNames`.
 3. One chip row: flag (language read by screen readers) + set name + `printedNumberOf(card)` ("#084/187", "#TG05/TG30",
    "#085"), plus the rarity in Korean in the Korean UI (`rarityLabel`).
-4. `PriceHero`: tier cheer on the panel edge, 시세 (+ variant name) with the optional calm trend pill on the same row
-   ("요즘 올랐어요 ▲25%"), the big `Money` (second currency under it), the low–high row and the source line ("23시간 전
-   업데이트 · TCGplayer"), and a small "eBay 가격은 아래에 있어요 ↓" button that scrolls to the eBay panel and focuses its
-   heading. The hint is part of the fold: drawn under the source line on tall phones, right under the low–high row on
-   phones ≤ 800px tall (CSS `order`; it comes before the source line in the page).
-   TCGplayer: "지금 파는 최저가" … "최고가". Cardmarket (converted, 약/≈ on both): one "요즘 거래 가격" label.
-   Between the two numbers a static bar with a small "시세" / "Market" tag where 시세 sits (`format.rangeMarker`); when 시세
-   is within 2% of an end, or low = high, no bar: just "4,760원 ~ 9,000원" ("–" in English).
-5. `VariantPicker`, then `CollectButton`.
-6. `EbayPanel` (live Buy It Now total incl. shipping + 보통 가격 + auctions when the worker is set, and always three
-   tiles: 경매 가격 보기 · 지금 살 수 있는 가격 · 팔린 가격 보기), then the "어른과 함께" disclaimer. Under its heading a
+4. `VariantPicker` (only with two or more printings): one row of tiles, each a `<button aria-pressed>` with the short
+   name over its price ("Normal $0.18 · Poké Ball $0.60 · Master Ball $2.27"), in the order of `card.variants` (most
+   common first). Four or more printings scroll sideways inside the row. Names come from `format.variantLabel` /
+   `variantShortLabel` with `{ cardLang, siblings }`: the plain mirror of a Japanese / Korean card is "Mirror" / "미러",
+   or "Poké Ball mirror" / "몬스터볼 미러" when the card also has a special pattern (SV8a, M2a); "Reverse Holo" is for
+   English cards only. The screen opens on `printing.startVariant`: the `?v=` printing, else the one printing of this
+   card the kid saved, else `card.defaultVariant`.
+5. `PriceHero` for the picked printing: tier cheer on the panel edge, "시세 · {printing}" with the optional calm trend
+   pill ("요즘 올랐어요 ▲25%"), the big `Money` (second currency under it), the low–high row, the source line
+   ("TCGplayer · 20시간 전 확인" / "TCGplayer · checked 20h ago": the time the price was read, not when it last
+   changed), and a small "eBay 가격은 아래에 있어요 ↓" button that scrolls to the eBay panel and focuses its heading.
+   The hint is part of the fold: drawn under the source line on tall phones, right under the low–high row on phones
+   ≤ 800px tall (CSS `order`).
+   Range labels (`format.rangeView`): "지금 파는 최저가" … "최고가" only when both ends are TCGplayer's own lowest and
+   highest listing; otherwise one "보통 가격" / "Usual prices" label (a junk-low or sky-high listing was left out, or
+   the numbers are Cardmarket averages). Between the two numbers a static bar with a small "시세" / "Market" tag
+   (`format.rangeMarker`); when 시세 is within 2% of an end, or low = high, no bar: just "4,760원 ~ 9,000원".
+   Special states: an asking price (`summary.asking`: listings but no recent sales) is titled "파는 사람이 부른 가격" /
+   "Asking price" and shown with 약 / ≈; a mixed mirror price (Cardmarket's one number for all mirror patterns,
+   `printing.isMixedMirror`) says so in the source line; a printing without a price shows the no-price panel ("아직
+   가격이 없어요", plus "이 무늬는 드물어요…" for a rare pattern) with a button to the eBay panel.
+   On the Korean route (`lang === 'ko'`) every price is approximate (the data is the Japanese card's).
+6. Notes: "일본판 카드 가격이에요. 한글판은 다를 수 있어요." on the Korean route, then `VariantHelp`: the line "가격은
+   반짝이 무늬에 따라 달라요. 구별하는 법 ›" opens the sheet "내 카드는 어떤 거예요?" (our own small drawings, one row per
+   printing with how to tell and its price; tapping a row picks it).
+7. `CollectButton` (saves the picked printing), then `EbayPanel` (live Buy It Now total incl. shipping + 보통 가격 +
+   auctions when the worker is set, and always three tiles: 경매 가격 보기 · 지금 살 수 있는 가격 · 팔린 가격 보기; the
+   search words follow the printing, e.g. "master ball"), then the "어른과 함께" disclaimer. Under its heading a
    shipping caption that follows the country, not the UI language (see Country and money › eBay).
    With won, `MorePrices` starts with the rate line "오늘 환율: 1달러 = 1,361원 · 방금 업데이트" (no "오늘" when older than a day).
-7. `MorePrices` (closed `<details>`): raw TCGplayer USD / Cardmarket EUR numbers, TCGplayer link, the eBay search words.
+8. `MorePrices` (closed `<details>`): raw TCGplayer USD / Cardmarket EUR numbers ("Ignored: too low" next to a junk
+   low, "No recent sales" on an asking block, "All mirror patterns together" on a mixed block), TCGplayer link, the
+   eBay search words.
 
-Measured on the production build in Chromium (104 combinations: 375×667, 390×844 and 430×932 × Korean/English × KRW/USD
-× dark/light for ja/SV8a-084, ko/SV8a-084, en/sv03.5-199 and en/svp-085, plus trend-pill cards on the SE): the big price,
-its second currency and the low–high row end above the raised Scan button every time (on the SE the row ends at
-y ≈ 571, the button starts at 579). The worst case (two-line name, wrapped chips and a trend pill on an SE) shrinks the
-art towards its 92 px minimum.
+Measured on the production build in Chromium (38 combinations: 375×667 and 390×844 with iPhone safe areas ×
+US/Korean kid × ja/SV8a-084, ja/SV2a-094, ko/SV8a-084, en/base1-4, en/swsh1-10, en/sv03.5-001, en/sv03.5-003 and
+en/sv03.5-199, plus three cards without the price files; every tile tapped in turn): the big price, the low–high row
+and the eBay hint end above the raised Scan button every time (on the SE the hint ends at y ≈ 571, the limit is 574),
+the tiles don't move when another printing is picked, and the point at the centre of every tile is that tile.
 
-The screen also re-converts EUR prices with live rates (`applyRates(card, useRates())`), records history with the
-approx flag, and copies freshly loaded prices onto saved copies of the card (`updateCollectionPrice`).
+The screen also re-converts EUR prices with live rates (`applyRates(card, useRates())`), records history for the
+printing on screen (`pushHistory(card, price, approx, variantKey)`, once per pick, so Recent shows what the kid last
+looked at), and copies freshly loaded prices onto saved copies of the card (`updateCollectionPrice`; a printing
+without a price right now keeps the price it was saved with). After a scan, when the screen shows the usual printing
+and a shinier one is worth 3× more (`printing.hasShinyUpgrade`), one toast per session says "반짝이는 카드예요? 무늬를
+고르면 딱 맞는 가격이 나와요." (sessionStorage `cc:variantNudged`).
 
 ## Country and money
 
@@ -585,8 +615,11 @@ export function resetAllData(): void;                                           
 // Saved prices refresh by themselves (screens/collection/useRefreshPrices.ts): when Home or My Cards opens online, prices
 //   older than 24 h are re-checked in the background, 2 cards at a time, at most once an hour ("cc:pricesAutoRefreshedAt");
 //   one refresh runs app-wide (the manual 가격 새로고침 joins or follows it). Opening a card also updates its saved copies.
+//   The refresh converts with live rates (applyRates) and writes nothing for a printing without a price: the card keeps
+//   its last price and is not looked up again for a day (remembered for the session).
 // Not managed here: "cc:scanTipsSeen" (CameraView's first-time tips, kept by resetAllData), "cc:cache:*" (cache.ts),
-//   "cc:pricesAutoRefreshedAt" (useRefreshPrices) and sessionStorage "cc:grownUpOk" (grownUpGate).
+//   "cc:pricesAutoRefreshedAt" (useRefreshPrices), sessionStorage "cc:grownUpOk" (grownUpGate) and
+//   sessionStorage "cc:variantNudged" (CardScreen's once-a-session "shiny card?" toast).
 ```
 
 ### Small shared helpers (lib)
@@ -704,11 +737,14 @@ times more on TCGplayer than on Cardmarket, so prices and tiers of saved Japanes
   flagged `converted` (shown as approximate — "약 4,760원" / "약 $3.50" in the Korean UI, "≈ $3.50" / "≈ ₩4,760" in the
   English UI — in the hero, its low/high, saved cards, Recent and totals). Korean UI + won writes amounts the Korean way
   everywhere: "4,760원", "198만 원".
-* **Low / high** — labelled by what they are. TCGplayer: "지금 파는 최저가 / Lowest for sale now" (`lowPrice`, ≤ market)
-  and "최고가 / Highest" (`highPrice` unless it is above 3× market; then the largest of mid, Direct low and Cardmarket's
-  averages that is itself ≤ 3× market, else market). Cardmarket: one "요즘 거래 가격 / Recent prices" label over the
-  min/max of the recent averages (avg7, avg30, trend, avg; each within 3× of 시세; its raw `low` is a junk listing). The bar between them is a static picture with a
-  "시세" tag, not a slider, and is left out ("~") when 시세 sits at one end.
+* **Low / high** — labelled by what they are. TCGplayer low: the cheapest of `lowPrice` and `midPrice` that is between
+  a third of market and market (a 1-cent damaged-card listing is not "the usual lowest"), else market. TCGplayer high:
+  `highPrice` unless it is above 3× market; then the largest of mid, Direct low and Cardmarket's averages that is itself
+  ≤ 3× market, else market. When both ends are TCGplayer's own lowest and highest listing the row reads "지금 파는
+  최저가 / Lowest for sale now" … "최고가 / Highest"; otherwise one "보통 가격 / Usual prices" label
+  (`format.rangeView`). Cardmarket: the same "보통 가격 / Usual prices" label over the min/max of the recent averages
+  (avg7, avg30, trend, avg; each within 3× of 시세; its raw `low` is a junk listing). The bar between them is a static
+  picture with a "시세" tag, not a slider, and is left out ("~") when 시세 sits at one end.
 * **Trend**: Cardmarket `avg7` vs `avg30` → `changePct`, only for real moves (see pricing rules); shown as a small grey
   pill "요즘 올랐어요 ▲25%" / "요즘 내렸어요 ▼12%" with only the arrow and number coloured. No pill = no notable move.
 * **eBay**: always deep links (auctions ending soonest, Buy It Now lowest price + shipping, sold listings), through the

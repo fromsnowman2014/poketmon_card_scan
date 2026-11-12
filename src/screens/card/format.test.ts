@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
+import type { PriceSummary, TcgplayerPrice } from '../../lib/types';
 import {
   auctionHeading,
   bidsText,
   cardNames,
+  cardPath,
+  foilOf,
+  plainMirrorIsPokeBall,
   printedNumberOf,
   rangeMarker,
   rangePosition,
+  rangeView,
   rarityLabel,
   shippingNote,
   speciesIds,
   timeLeft,
   trendOf,
   variantLabel,
+  variantShortLabel,
   withShipping,
 } from './format';
 
@@ -27,8 +33,147 @@ describe('variantLabel', () => {
     expect(variantLabel('holo-shadowless', 'ko')).toBe('홀로 · Shadowless');
     expect(variantLabel('holo-1999-2000-copyright', 'en')).toBe('Holo · 1999–2000 Copyright');
     expect(variantLabel('reverse-masterball-2', 'en')).toBe('Master Ball mirror · 2');
-    expect(variantLabel('reverse-energy', 'en')).toBe('Reverse Holo · Energy');
+    expect(variantLabel('reverse-cosmos', 'en')).toBe('Reverse Holo · Cosmos');
   });
+
+  it('names the mirror patterns of Japanese sets', () => {
+    expect(variantLabel('reverse-energy', 'en')).toBe('Energy mirror');
+    expect(variantLabel('reverse-energy', 'ko')).toBe('에너지 미러');
+    expect(variantLabel('reverse-loveball', 'ko')).toBe('러브러브볼 미러');
+    expect(variantLabel('reverse-quickball', 'en')).toBe('Quick Ball mirror');
+    expect(variantLabel('reverse-duskball', 'ko')).toBe('다크볼 미러');
+    expect(variantLabel('reverse-friendball', 'en')).toBe('Friend Ball mirror');
+    expect(variantLabel('reverse-team-rocket', 'ko')).toBe('로켓단 미러');
+    expect(variantLabel('reverse-team-rocket', 'en')).toBe('Team Rocket mirror');
+    // A ball we have no name for is still spelled out.
+    expect(variantLabel('reverse-heavyball', 'en')).toBe('Heavy Ball mirror');
+    expect(variantLabel('reverse-energy-stamp-staff', 'en')).toBe('Energy mirror · Staff stamp');
+  });
+
+  it('calls a plain reverse "Reverse Holo" on English cards and when the card language is unknown', () => {
+    expect(variantLabel('reverse', 'en')).toBe('Reverse Holo');
+    expect(variantLabel('reverse', 'ko')).toBe('리버스 홀로');
+    expect(variantLabel('reverse', 'en', { cardLang: 'en', siblings: ['normal', 'reverse', 'reverse-masterball'] })).toBe('Reverse Holo');
+    expect(variantLabel('reverse', 'ko', { cardLang: 'en' })).toBe('리버스 홀로');
+  });
+
+  it('calls it a mirror on Japanese and Korean cards', () => {
+    expect(variantLabel('reverse', 'en', { cardLang: 'ja' })).toBe('Mirror'); // an old saved item: no siblings known
+    expect(variantLabel('reverse', 'ko', { cardLang: 'ja' })).toBe('미러');
+    expect(variantLabel('reverse', 'ko', { cardLang: 'ko', siblings: ['normal', 'reverse'] })).toBe('미러');
+    expect(variantLabel('reverse-stamp-gamestop', 'en', { cardLang: 'ja' })).toBe('Mirror · GameStop stamp');
+  });
+
+  it('calls the plain mirror the Poké Ball one when the card also has a special pattern and no Poké Ball printing', () => {
+    const sv8a = { cardLang: 'ja', siblings: ['normal', 'reverse', 'reverse-masterball'] } as const;
+    expect(variantLabel('reverse', 'en', sv8a)).toBe('Poké Ball mirror');
+    expect(variantLabel('reverse', 'ko', sv8a)).toBe('몬스터볼 미러');
+    expect(variantLabel('reverse', 'ko', { cardLang: 'ko', siblings: sv8a.siblings })).toBe('몬스터볼 미러');
+    // M2a: an energy pattern next to the plain mirror.
+    expect(variantLabel('reverse', 'en', { cardLang: 'ja', siblings: ['normal', 'reverse-energy', 'reverse'] })).toBe('Poké Ball mirror');
+    // SV2a names its Poké Ball printing: nothing is left to rename.
+    const sv2a = { cardLang: 'ja', siblings: ['holo', 'reverse-pokeball', 'reverse-masterball', 'reverse'] } as const;
+    expect(variantLabel('reverse', 'en', sv2a)).toBe('Mirror');
+    expect(variantLabel('reverse-pokeball', 'en', sv2a)).toBe('Poké Ball mirror');
+    expect(variantLabel('normal', 'en', sv8a)).toBe('Normal');
+    expect(variantLabel('reverse-masterball', 'ko', sv8a)).toBe('마스터볼 미러');
+  });
+});
+
+describe('variantShortLabel', () => {
+  const sv8a = { cardLang: 'ja', siblings: ['normal', 'reverse', 'reverse-masterball'] } as const;
+
+  it('drops the word "mirror" from pattern printings: the name on a picker tile', () => {
+    expect(variantShortLabel('reverse-masterball', 'en')).toBe('Master Ball');
+    expect(variantShortLabel('reverse-masterball', 'ko')).toBe('마스터볼');
+    expect(variantShortLabel('reverse-pokeball', 'ko')).toBe('몬스터볼');
+    expect(variantShortLabel('reverse', 'en', sv8a)).toBe('Poké Ball');
+    expect(variantShortLabel('reverse', 'ko', sv8a)).toBe('몬스터볼');
+    expect(variantShortLabel('reverse-energy', 'ko')).toBe('에너지');
+    expect(variantShortLabel('reverse-team-rocket', 'en')).toBe('Team Rocket');
+  });
+
+  it('is the full name for everything else', () => {
+    expect(variantShortLabel('normal', 'ko')).toBe('기본');
+    expect(variantShortLabel('reverse', 'en')).toBe('Reverse Holo');
+    expect(variantShortLabel('reverse', 'ko', { cardLang: 'ja' })).toBe('미러');
+    expect(variantShortLabel('holo-shadowless', 'en')).toBe('Holo · Shadowless');
+    expect(variantShortLabel('reverse-masterball-2', 'en')).toBe('Master Ball · 2');
+    expect(variantShortLabel('firstEdition', 'en')).toBe('1st Edition');
+  });
+});
+
+describe('foilOf / plainMirrorIsPokeBall', () => {
+  it('reads the mirror pattern out of a key', () => {
+    expect(foilOf('reverse-masterball')).toBe('masterball');
+    expect(foilOf('reverse-team-rocket-2')).toBe('team-rocket');
+    expect(foilOf('reverse-heavyball')).toBe('heavyball');
+    expect(foilOf('reverse')).toBeUndefined();
+    expect(foilOf('reverse-stamp-gamestop')).toBeUndefined();
+    expect(foilOf('reverse-cosmos')).toBeUndefined();
+    expect(foilOf('holo-masterball')).toBeUndefined();
+  });
+
+  it('needs a Japanese or Korean card, a special pattern and no Poké Ball printing', () => {
+    expect(plainMirrorIsPokeBall({ cardLang: 'ja', siblings: ['normal', 'reverse', 'reverse-masterball'] })).toBe(true);
+    expect(plainMirrorIsPokeBall({ cardLang: 'en', siblings: ['normal', 'reverse', 'reverse-masterball'] })).toBe(false);
+    expect(plainMirrorIsPokeBall({ cardLang: 'ja', siblings: ['normal', 'reverse'] })).toBe(false);
+    expect(plainMirrorIsPokeBall({ cardLang: 'ja', siblings: ['reverse', 'reverse-pokeball', 'reverse-masterball'] })).toBe(false);
+    expect(plainMirrorIsPokeBall({ cardLang: 'ja' })).toBe(false);
+    expect(plainMirrorIsPokeBall()).toBe(false);
+  });
+});
+
+describe('cardPath', () => {
+  it('links to a card, on one printing when given', () => {
+    expect(cardPath({ lang: 'ja', id: 'SV8a-084' })).toBe('/card/ja/SV8a-084');
+    expect(cardPath({ lang: 'ja', id: 'SV8a-084' }, 'reverse-masterball')).toBe('/card/ja/SV8a-084?v=reverse-masterball');
+    expect(cardPath({ lang: 'en', id: 'sv03.5-199' }, undefined)).toBe('/card/en/sv03.5-199');
+    expect(cardPath({ lang: 'en', id: 'a/b' }, 'holo stamp&x')).toBe('/card/en/a%2Fb?v=holo%20stamp%26x');
+  });
+});
+
+describe('rangeView', () => {
+  const tcg = (low: number | null, mid: number | null, high: number | null, market: number | null): TcgplayerPrice => ({
+    low,
+    mid,
+    high,
+    market,
+    directLow: null,
+  });
+  const summary = (market: number | null, low: number | null, high: number | null, source: PriceSummary['source'] = 'tcgplayer'): PriceSummary => ({
+    market,
+    low,
+    high,
+    changePct: null,
+    source,
+    converted: source === 'cardmarket',
+  });
+
+  it('labels both ends only when they are TCGplayer’s own cheapest and dearest listing', () => {
+    expect(rangeView(summary(2, 1.5, 4), tcg(1.5, 2.1, 4, 2))).toEqual({ kind: 'range', labels: 'ends', low: 1.5, high: 4, marker: 0.2 });
+  });
+
+  it('says "usual prices" when the summary replaced an end, or the numbers are Cardmarket averages', () => {
+    // SV8a-084 Poké Ball mirror: the $1.84 top listing is over 3× the price, so the high is the middle listing.
+    expect(rangeView(summary(0.6, 0.34, 0.63), tcg(0.34, 0.63, 1.84, 0.6))).toMatchObject({ kind: 'range', labels: 'usual' });
+    // Normal: a lone 1-cent listing is not the low.
+    expect(rangeView(summary(0.18, 0.17, 0.18), tcg(0.01, 0.17, 1, 0.18))).toEqual({ kind: 'range', labels: 'usual', low: 0.17, high: 0.18, marker: null });
+    expect(rangeView(summary(1.69, 1.5, 2.04, 'cardmarket'), null)).toMatchObject({ kind: 'range', labels: 'usual' });
+    // A Cardmarket summary never borrows TCGplayer's words, whatever block sits next to it.
+    expect(rangeView(summary(1.69, 1.5, 2.04, 'cardmarket'), tcg(1.5, null, 2.04, null))).toMatchObject({ labels: 'usual' });
+  });
+
+  it('shows one cheapest listing when there is no spread, and nothing when even that is not a real listing', () => {
+    expect(rangeView(summary(2, 2, 2), tcg(2, 2, 2, 2))).toEqual({ kind: 'single', low: 2 });
+    expect(rangeView(summary(2, 2, 2), tcg(0.01, 2, 900, 2))).toEqual({ kind: 'none' });
+    expect(rangeView(summary(2, 2, 2, 'cardmarket'), null)).toEqual({ kind: 'none' });
+    expect(rangeView(summary(2, null, 3), tcg(null, 2, 3, 2))).toEqual({ kind: 'none' });
+    expect(rangeView(summary(null, null, null), null)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('variantLabel (other printings)', () => {
 
   it('humanizes unknown keys', () => {
     expect(variantLabel('cracked-ice', 'en')).toBe('Cracked Ice');
