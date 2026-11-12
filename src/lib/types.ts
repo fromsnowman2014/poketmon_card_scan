@@ -33,13 +33,23 @@ export interface CardBrief {
   setName?: string;
 }
 
-/** Raw TCGplayer price block for one variant (USD). */
+/**
+ * Raw TCGplayer price block for one variant (USD). English cards: from TCGdex. Japanese (and Korean-route) cards: from
+ * the daily TCGplayer-Japan set file (lib/tcgplayerJa.ts), one product per printing.
+ */
 export interface TcgplayerPrice {
   low: number | null;
   mid: number | null;
   high: number | null;
+  /** What copies actually sold for lately. null when TCGplayer has listings but no recent sales. */
   market: number | null;
   directLow: number | null;
+  /**
+   * True when there are no recent sales (market null) and `mid` holds the asking price to show instead — already
+   * chosen by tcgplayerJa.ts (the middle listing, or the cheapest one when listings are far apart). Shown as
+   * approximate ("≈ $12.00", "Asking price"), never as an exact market price.
+   */
+  asking?: boolean;
 }
 
 /** Raw Cardmarket price block (EUR). */
@@ -73,7 +83,15 @@ export interface PriceSummary {
   source: 'tcgplayer' | 'cardmarket';
   /** True when the numbers were converted from EUR (Cardmarket) — show as approximate ("약 4,760원" / "≈ $3.50"). */
   converted: boolean;
-  /** ISO timestamp of the source price update, if known. */
+  /**
+   * True when `market` is an asking price (TCGplayer listings without recent sales, TcgplayerPrice.asking): show it as
+   * approximate too and call it an asking price, not the market price. Never set together with `converted`.
+   */
+  asking?: boolean;
+  /**
+   * ISO timestamp of the prices: for the TCGplayer-Japan file the time TCGplayer's prices were taken (the file's `d`),
+   * for TCGdex data its daily import time. Shown as "checked 3h ago".
+   */
   updated?: string;
 }
 
@@ -124,7 +142,10 @@ export interface CardDetail extends CardBrief {
    * `https://tcgplayer-cdn.tcgplayer.com/product/{tcgplayerId}_400w.jpg`. Full URL, use as-is.
    */
   imageFallback?: string;
-  /** Printings with prices. Never empty: at least one entry (possibly with summary=null). */
+  /**
+   * Printings with prices, most common first (normal, holo, …, reverse / mirror, special foils such as Master Ball,
+   * stamped / jumbo): the order the picker shows. Never empty: at least one entry (possibly with summary=null).
+   */
   variants: CardVariant[];
   /** Key of the variant to show first (the one with the best price data / most common). */
   defaultVariant: string;
@@ -225,6 +246,11 @@ export interface HistoryItem extends CardBrief {
   /** For showing the name in the UI language (names.translateCardName). */
   dexIds?: number[];
   imageFallback?: string;
+  /**
+   * Key of the printing whose price this is (the one the kid last looked at). Missing on items saved before this
+   * field existed: those hold the default printing's price.
+   */
+  variant?: string;
 }
 
 export interface Settings {

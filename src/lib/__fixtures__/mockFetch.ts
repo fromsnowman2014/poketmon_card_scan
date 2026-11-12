@@ -67,10 +67,13 @@ export const tcgdexHandler: Handler = (url, body) => {
   return undefined;
 };
 
+/** Where the app's own files (relative URLs: data/tcgplayer-ja/…) appear to come from in handlers. */
+export const APP_ORIGIN = 'https://app.test';
+
 /** Stubs global fetch with `handler` (falls back to `tcgdexHandler` when it returns undefined). */
 export function mockFetch(handler: Handler = tcgdexHandler) {
   const fn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = new URL(String(input));
+    const url = new URL(String(input), APP_ORIGIN);
     const body = typeof init?.body === 'string' ? init.body : undefined;
     const out = handler(url, body) ?? (handler === tcgdexHandler ? undefined : tcgdexHandler(url, body));
     if (out instanceof Response) return out;

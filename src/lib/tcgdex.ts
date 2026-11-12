@@ -4,6 +4,7 @@ import { cached, fetchJson, HttpError } from './cache';
 import { getRates, getRatesSync, type Rates } from './fx';
 import { findSpecies, translateCardName } from './names';
 import { buildVariants } from './pricing';
+import { getJaSetPrices, setKey, type JaSetFile } from './tcgplayerJa';
 import enSetData from '../data/en-sets.json';
 
 export interface SetInfo {
@@ -171,12 +172,13 @@ export function printedNumber(card: { localId: string; setId: string; setName: s
   return `${localId}/${official}`;
 }
 
-function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[]): CardDetail {
+function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[], ja?: JaSetFile | null): CardDetail {
   const setId = raw.set?.id ?? splitCardId(raw.id, raw.localId).setId;
   const set = sets.find((s) => s.id === setId);
   const setName = raw.set?.name ?? set?.name ?? setId;
   const official = raw.set?.cardCount?.official ?? set?.official;
-  const { variants, defaultVariant } = buildVariants(raw, rates);
+  const { variants, defaultVariant } = buildVariants(raw, rates, ja);
+  // Variants are most common first: the picture of the regular card, also for cards TCGdex has no product id for.
   const tcgplayerId = variants.find((v) => v.tcgplayerId)?.tcgplayerId;
   return {
     id: raw.id,
@@ -205,13 +207,23 @@ function toDetail(raw: RawCard, lang: DataLang, rates: Rates, sets: SetInfo[]): 
  * Full card with prices. KO reads JA data (lang stays 'ja'). Cached 30 min. 404 → HttpError status 404.
  * Never waits for exchange rates: EUR prices are converted with the last known (or fallback) rates while live
  * rates load in the background; pricing.applyRates re-converts once they arrive.
+ * Japanese cards also load their set's TCGplayer price file (tcgplayerJa.getJaSetPrices) next to the card: it never
+ * fails and gives up after 4 s, and without it the card has its Cardmarket prices, as before.
  */
 export function getCard(lang: CardLang, id: string): Promise<CardDetail> {
   const src = dataLang(lang);
   return cached(`card:${src}:${id}`, 30 * MINUTE, async () => {
     void getRates();
-    const [raw, sets] = await Promise.all([fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`), setsOrEmpty(src)]);
-    return toDetail(raw, src, getRatesSync(), sets);
+    // The set is read off the card id ("SV-P-085" → "SV-P") so the price file loads next to the card, not after it.
+    const setId = splitCardId(id).setId;
+    const [raw, sets, ja] = await Promise.all([
+      fetchJson<RawCard>(`${API}/${src}/cards/${encodeURIComponent(id)}`),
+      setsOrEmpty(src),
+      src === 'ja' ? getJaSetPrices(setId) : null,
+    ]);
+    // Prices are matched by card number: never with another set's file, should an id ever split differently.
+    const sameSet = !raw.set?.id || setKey(raw.set.id) === setKey(setId);
+    return toDetail(raw, src, getRatesSync(), sets, sameSet ? ja : null);
   });
 }
 

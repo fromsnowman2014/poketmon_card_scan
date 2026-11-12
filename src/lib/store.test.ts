@@ -306,11 +306,106 @@ describe('collection', () => {
   it('updateCollectionPrice keeps the first price, or sets it when unknown', () => {
     const a = store.addToCollection(card('SV8a-001'), 'normal');
     const b = store.addToCollection(card('SV8a-002', [variant('normal', null)]), 'normal');
-    store.updateCollectionPrice(a, 0.5);
+    store.updateCollectionPrice(a, 0.5, true); // still a Cardmarket price
     store.updateCollectionPrice(b, 3);
     const [itemB, itemA] = saved();
-    expect(itemA).toMatchObject({ priceUsd: 0.5, firstPriceUsd: 0.12 });
-    expect(itemB).toMatchObject({ priceUsd: 3, firstPriceUsd: 3 });
+    expect(itemA).toMatchObject({ priceUsd: 0.5, priceApprox: true, firstPriceUsd: 0.12 });
+    expect(itemB).toMatchObject({ priceUsd: 3, priceApprox: false, firstPriceUsd: 3 });
+    store.updateCollectionPrice('ja:nope:normal', 9); // not saved: nothing happens
+    expect(saved()).toHaveLength(2);
+  });
+
+  describe('a re-checked price from another market (Cardmarket ≈ ↔ TCGplayer exact)', () => {
+    const snaps = () => JSON.parse(ls.getItem('cc:snapshots')!).data as import('./types').ValueSnapshot[];
+    const exact = (key: string, market: number): CardVariant => ({ ...variant(key, market), summary: { ...variant(key, market).summary!, source: 'tcgplayer', converted: false } });
+
+    it('starts the card over: first price = new price, and it leaves the "since last week" baselines', () => {
+      vi.useFakeTimers({ now: new Date(2026, 10, 1, 12) });
+      const a = store.addToCollection(card('SV8a-084'), 'normal'); // ≈ $0.12 (Cardmarket)
+      const b = store.addToCollection(card('SV8a-085'), 'reverse'); // ≈ $1.69
+      store.recordSnapshot(peek(store.useCollection));
+      vi.setSystemTime(new Date(2026, 10, 9, 12));
+      store.recordSnapshot(peek(store.useCollection));
+      expect(snaps().map((s) => Object.keys(s.cards ?? {}).sort())).toEqual([[a, b].sort(), [a, b].sort()]);
+
+      store.updateCollectionPrice(a, 0.18, false); // the TCGplayer price arrives
+      const item = saved().find((i) => i.key === a)!;
+      expect(item).toMatchObject({ priceUsd: 0.18, priceApprox: false, firstPriceUsd: 0.18, priceUpdatedAt: new Date(2026, 10, 9, 12).toISOString() });
+      // The other card is untouched, in My Cards and in every snapshot; totals stay what they were that day.
+      expect(saved().find((i) => i.key === b)).toMatchObject({ priceUsd: 1.69, firstPriceUsd: 1.69 });
+      expect(snaps().map((s) => s.cards)).toEqual([{ [b]: [1.69, 1] }, { [b]: [1.69, 1] }]);
+      expect(snaps().map((s) => s.totalUsd)).toEqual([1.81, 1.81]);
+      // Today's snapshot takes the card back in with its new price: no move against last week for it.
+      store.recordSnapshot(peek(store.useCollection));
+      expect(snaps()[1].cards).toEqual({ [a]: [0.18, 1], [b]: [1.69, 1] });
+      expect(snaps()[0].cards).toEqual({ [b]: [1.69, 1] });
+    });
+
+    it('a new price from the same market only moves the price', () => {
+      const a = store.addToCollection(card('SV8a-084', [exact('normal', 0.18)]), 'normal');
+      store.recordSnapshot(peek(store.useCollection));
+      store.updateCollectionPrice(a, 0.25);
+      expect(saved()[0]).toMatchObject({ priceUsd: 0.25, priceApprox: false, firstPriceUsd: 0.18 });
+      expect(snaps()[0].cards).toEqual({ [a]: [0.18, 1] });
+    });
+
+    it('does not put an approximate price over an exact one for 7 days (a price file that failed to load)', () => {
+      vi.useFakeTimers({ now: new Date('2026-11-12T10:00:00Z') });
+      const a = store.addToCollection(card('SV8a-084', [exact('normal', 0.18)]), 'normal');
+      store.recordSnapshot(peek(store.useCollection));
+      const before = saved()[0];
+
+      vi.setSystemTime(new Date('2026-11-19T09:59:00Z')); // 6 days 23 h 59 min later
+      store.updateCollectionPrice(a, 0.03, true);
+      expect(saved()[0]).toEqual(before); // price, ≈ flag, first price and "checked" time all as they were
+      expect(snaps()[0].cards).toEqual({ [a]: [0.18, 1] });
+      // An exact price is always welcome.
+      store.updateCollectionPrice(a, 0.2, false);
+      expect(saved()[0]).toMatchObject({ priceUsd: 0.2, priceApprox: false, firstPriceUsd: 0.18, priceUpdatedAt: '2026-11-19T09:59:00.000Z' });
+
+      vi.setSystemTime(new Date('2026-11-26T09:59:00Z')); // 7 days after that
+      store.updateCollectionPrice(a, 0.03, true);
+      expect(saved()[0]).toMatchObject({ priceUsd: 0.03, priceApprox: true, firstPriceUsd: 0.03, priceUpdatedAt: '2026-11-26T09:59:00.000Z' });
+      expect(snaps()[0].cards).toEqual({});
+    });
+
+    it('a missing price never replaces a saved one, nor marks it as checked', () => {
+      vi.useFakeTimers({ now: new Date('2026-11-12T10:00:00Z') });
+      const a = store.addToCollection(card('SV8a-084'), 'normal');
+      const b = store.addToCollection(card('SV8a-185', [variant('reverse-masterball', null)]), 'reverse-masterball');
+      const before = saved();
+      vi.setSystemTime(new Date('2026-11-13T10:00:00Z'));
+      const write = vi.spyOn(ls, 'setItem');
+      store.updateCollectionPrice(a, null);
+      store.updateCollectionPrice(a, null, true);
+      store.updateCollectionPrice(b, null);
+      expect(saved()).toEqual(before);
+      expect(write).not.toHaveBeenCalled();
+      // An unpriced card takes its first price from whichever market has one, without a "switch".
+      store.updateCollectionPrice(b, 2.27);
+      expect(saved().find((i) => i.key === b)).toMatchObject({ priceUsd: 2.27, priceApprox: false, firstPriceUsd: 2.27, priceUpdatedAt: '2026-11-13T10:00:00.000Z' });
+    });
+
+    it('adding another copy follows the same rules', () => {
+      vi.useFakeTimers({ now: new Date('2026-11-12T10:00:00Z') });
+      const key = store.addToCollection(card('SV8a-084'), 'normal'); // ≈ $0.12
+      store.recordSnapshot(peek(store.useCollection));
+      store.addToCollection(card('SV8a-084', [exact('normal', 0.18)]), 'normal');
+      expect(saved()[0]).toMatchObject({ qty: 2, priceUsd: 0.18, priceApprox: false, firstPriceUsd: 0.18 });
+      expect(snaps()[0].cards).toEqual({});
+      // Back on the Cardmarket stand-in the next day: one more copy, same price.
+      vi.setSystemTime(new Date('2026-11-13T10:00:00Z'));
+      store.addToCollection(card('SV8a-084'), 'normal');
+      expect(saved()[0]).toMatchObject({ key, qty: 3, priceUsd: 0.18, priceApprox: false, priceUpdatedAt: '2026-11-12T10:00:00.000Z' });
+      store.addToCollection(card('SV8a-084', [variant('normal', null)]), 'normal');
+      expect(saved()[0]).toMatchObject({ qty: 4, priceUsd: 0.18 });
+    });
+
+    it('saves an asking price as approximate', () => {
+      const asking: CardVariant = { ...variant('normal', 4.99), summary: { ...variant('normal', 4.99).summary!, source: 'tcgplayer', converted: false, asking: true } };
+      const key = store.addToCollection(card('SV-P-127', [asking]), 'normal');
+      expect(saved()[0]).toMatchObject({ key, priceUsd: 4.99, priceApprox: true });
+    });
   });
 
   it('makes room by dropping cached API data rather than losing My Cards', async () => {
@@ -400,6 +495,25 @@ describe('history', () => {
     store.pushHistory(card('SV8a-002'), null, true);
     const items = JSON.parse(ls.getItem('cc:history')!).data as import('./types').HistoryItem[];
     expect(items.map((h) => h.priceApprox)).toEqual([false, true]);
+  });
+
+  it('remembers which printing the price is for', async () => {
+    store.pushHistory(card('SV8a-001'), 0.18);
+    store.pushHistory(card('SV8a-084'), 0.18, false, 'normal');
+    store.pushHistory(card('SV8a-084'), 2.27, false, 'reverse-masterball'); // the kid picked another printing: same entry
+    const items = () => JSON.parse(ls.getItem('cc:history')!).data as import('./types').HistoryItem[];
+    expect(items().map((h) => [h.id, h.priceUsd, h.variant])).toEqual([
+      ['SV8a-084', 2.27, 'reverse-masterball'],
+      ['SV8a-001', 0.18, undefined],
+    ]);
+    expect(items()[1]).not.toHaveProperty('variant');
+    // Survives a restart; an entry with a broken variant is dropped like any malformed one.
+    ls.setItem('cc:history', JSON.stringify({ v: 1, data: [...items(), { ...items()[0], id: 'SV8a-002', variant: 7 }] }));
+    await reload();
+    expect(peek(store.useHistory).map((h) => [h.id, h.variant])).toEqual([
+      ['SV8a-084', 'reverse-masterball'],
+      ['SV8a-001', undefined],
+    ]);
   });
 
   it('clearHistory empties it', () => {

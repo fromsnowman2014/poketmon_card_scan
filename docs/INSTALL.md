@@ -63,6 +63,28 @@ Change a file in `src/` and the page updates by itself. Press **Ctrl + C** in th
 | `npm run build` | Makes the finished app in the `dist/` folder (also checks the code for mistakes) |
 | `npm run preview` | Shows that finished app at http://localhost:4173/poketmon_card_scan/ |
 | `node worker/test.mjs` | Tests the optional eBay helper (no internet needed) |
+| `node scripts/build-ja-prices.test.mjs` | Tests the script that builds the Japanese-card price files (no internet needed) |
+
+### Japanese card prices on your computer (optional)
+
+The real app shows **TCGplayer** prices for Japanese and Korean cards. They come from price files that GitHub builds
+once a day (from [TCGCSV](https://tcgcsv.com), a free daily copy of TCGplayer's prices) and publishes with the app.
+Those files are **not in the repo**, so your local copy shows **Cardmarket** prices for these cards instead, with a `≈`.
+That is fine for most work.
+
+To see the same prices as the real app, copy the published files, then stop `npm run dev` (Ctrl + C) and start it again:
+
+```bash
+npm run ja-prices -- --prev https://fromsnowman2014.github.io/poketmon_card_scan/data/tcgplayer-ja/all.json --prev-only
+```
+
+This only copies from the app's own website into `public/data/` (a folder Git ignores). If it says
+`no previous snapshot`, the real app has no price files yet (the repo owner has to deploy once first) or your
+internet is off; nothing on your computer is changed then.
+
+> Plain `npm run ja-prices` (without the options) downloads everything from TCGCSV itself: about 900 requests the
+> first time. TCGCSV is a free community site, so **please don't run it more than once a day**. You rarely need it:
+> the daily GitHub job already does this.
 
 ---
 
@@ -173,6 +195,15 @@ npm install
 **The iPhone app updates itself** after a new version is published: it downloads in the background and switches over
 when the app is closed. To get it right away, swipe the app away in the app switcher and open it again.
 
+**Japanese card prices update themselves** once a day: the repo's **Build & Deploy** job on GitHub fetches them at
+21:17 UTC (with a second try at 03:17 UTC) and republishes the app. Two things the repo owner should know:
+
+- GitHub **pauses this daily job after 60 days without a commit** and sends an email. Turn it back on under
+  **Actions → Build & Deploy → Enable workflow**. Until then the app keeps the last prices for 7 days, then shows
+  Cardmarket prices (with a `≈`) for Japanese cards.
+- After 3 days without fresh prices the daily job turns red and GitHub emails you. TCGCSV may just be having a
+  break, so give it a day or two; if it stays red, open the run and read the error at the top.
+
 **Remove the app:** touch and hold the **CardCheck** icon → choose **Remove** (or **Delete Bookmark**) and confirm.
 ⚠️ This also deletes the "My Cards" saved in that app.
 
@@ -192,5 +223,6 @@ when the app is closed. To get it right away, swipe the app away in the app swit
 | No **Add to Home Screen** button | Open the page in **Safari** itself, not inside another app. |
 | The Home Screen app still shows the old version | Swipe it away in the app switcher and open it again. |
 | Prices or pictures don't load | The app needs the internet to look up cards (saved cards still show offline). |
+| Japanese cards show `≈` Cardmarket prices, not TCGplayer prices | On your computer: copy the price files ([Part 2](#japanese-card-prices-on-your-computer-optional)) and restart `npm run dev`. In the real app: the daily price job has probably been paused or is failing. Repo owner: **Actions → Build & Deploy → Enable workflow**, then **Run workflow** ([Part 4](#part-4--update-or-remove)). Some cards simply aren't on TCGplayer and always show Cardmarket. |
 
 More details: the [README](../README.md) (deploying, the optional live eBay prices) and [ARCHITECTURE.md](ARCHITECTURE.md) (how the code is organized).

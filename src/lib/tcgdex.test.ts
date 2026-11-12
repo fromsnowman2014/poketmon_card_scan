@@ -15,6 +15,9 @@ import {
   searchCards,
   splitCardId,
 } from './tcgdex';
+import type { JaGroup, JaSetFile } from './tcgplayerJa';
+import type { CardDetail } from './types';
+import jaCases from './__fixtures__/ja-tcgplayer.json';
 import { calledUrls, mockFetch, tcgdexHandler } from './__fixtures__/mockFetch';
 
 const LIVE = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.LIVE === '1';
@@ -145,6 +148,125 @@ describe.skipIf(LIVE)('tcgdex (mocked API)', () => {
       expect(calledUrls(fetchFn).some((u) => u.includes('frankfurter'))).toBe(true);
       await vi.advanceTimersByTimeAsync(7000);
       expect(getRatesSync()).toEqual(rates);
+      vi.useRealTimers();
+    });
+  });
+
+  describe('getCard with the TCGplayer-Japan price files (in a browser: the page has an address)', () => {
+    const PRICE_FILE = /\/data\/tcgplayer-ja\/s\/([^/]+)\.json$/;
+    const fileUrl = (key: string) => `${import.meta.env.BASE_URL}data/tcgplayer-ja/s/${key}.json`;
+    /** The products of one fixture card as its set's price file, taken three hours ago. */
+    const setFile = (id: keyof typeof jaCases, key: string): JaSetFile => ({
+      v: 1,
+      d: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+      k: key,
+      g: jaCases[id].groups as unknown as JaGroup[],
+    });
+    const withFiles = (files: Record<string, JaSetFile>, cards: Record<string, unknown> = {}) =>
+      mockFetch((url) => {
+        const key = PRICE_FILE.exec(url.pathname)?.[1];
+        if (key) return files[key];
+        return cards[decodeURIComponent(url.pathname.replace('/v2/ja/cards/', ''))];
+      });
+    const prices = (card: CardDetail) => card.variants.map((v) => [v.key, v.summary?.source, v.summary?.market]);
+    const HAWLUCHA_TCGPLAYER = [
+      ['normal', 'tcgplayer', 0.18],
+      ['reverse', 'tcgplayer', 0.6],
+      ['reverse-masterball', 'tcgplayer', 2.27],
+    ];
+
+    beforeEach(() => vi.stubGlobal('location', { href: 'https://kid.example/poketmon_card_scan/' }));
+
+    it('ja SV8a-084: loads the set\'s file next to the card and shows TCGplayer dollars, most common printing first', async () => {
+      const file = setFile('SV8a-084', 'sv8a');
+      fetchMock = withFiles({ sv8a: file });
+      const card = await getCard('ja', 'SV8a-084');
+      expect(prices(card)).toEqual(HAWLUCHA_TCGPLAYER);
+      expect(card.defaultVariant).toBe('normal');
+      expect(card.variants.map((v) => v.summary?.updated)).toEqual([file.d, file.d, file.d]);
+      expect(card.variants.map((v) => formatMoney(v.summary?.market, 'USD'))).toEqual(['$0.18', '$0.60', '$2.27']);
+      expect(card.imageFallback).toBe('https://tcgplayer-cdn.tcgplayer.com/product/602464_400w.jpg');
+      expect(calledUrls(fetchMock).filter((u) => u.includes('tcgplayer-ja'))).toEqual([fileUrl('sv8a')]);
+      // The second card of the set uses the file already in memory.
+      await getCard('ja', 'SV8a-001');
+      expect(calledUrls(fetchMock).filter((u) => u.includes('tcgplayer-ja'))).toHaveLength(1);
+    });
+
+    it('the Korean-card route gets the same prices (it reads the Japanese card)', async () => {
+      fetchMock = withFiles({ sv8a: setFile('SV8a-084', 'sv8a') });
+      const card = await getCard('ko', 'SV8a-084');
+      expect(card.lang).toBe('ja');
+      expect(prices(card)).toEqual(HAWLUCHA_TCGPLAYER);
+    });
+
+    it('promo ids split at the last dash: SV-P-085 asks for sv-p.json', async () => {
+      fetchMock = withFiles({});
+      await getCard('ja', 'SV-P-085');
+      expect(calledUrls(fetchMock).filter((u) => u.includes('tcgplayer-ja'))).toEqual([fileUrl('sv-p')]);
+    });
+
+    it('without a file for the set (404) the card has its Cardmarket prices, as before', async () => {
+      await getRates(); // mocked 0.9 EUR per USD
+      fetchMock = withFiles({});
+      const card = await getCard('ja', 'SV8a-084');
+      expect(card.variants.map((v) => [v.key, v.summary?.source ?? null])).toEqual([
+        ['normal', 'cardmarket'],
+        ['reverse', 'cardmarket'],
+        ['reverse-masterball', null],
+      ]);
+      expect(card.variants[1].summary?.market).toBeCloseTo(1.51 / 0.9, 9);
+      expect(card.defaultVariant).toBe('normal');
+      expect(card.imageFallback).toBe('https://tcgplayer-cdn.tcgplayer.com/product/602464_400w.jpg');
+    });
+
+    it('English cards never ask for a price file', async () => {
+      fetchMock = withFiles({ 'sv03-5': setFile('SV8a-084', 'sv03-5'), 'sv03.5': setFile('SV8a-084', 'sv03.5') });
+      const card = await getCard('en', 'sv03.5-199');
+      expect(card.variants[0].summary).toMatchObject({ market: 295.26, source: 'tcgplayer' });
+      expect(calledUrls(fetchMock).some((u) => u.includes('tcgplayer-ja'))).toBe(false);
+    });
+
+    it('a card TCGdex has no product id for gets its TCGplayer link and picture from the file', async () => {
+      fetchMock = withFiles({ sv2a: setFile('SV2a-094', 'sv2a') }, { 'SV2a-094': jaCases['SV2a-094'].card });
+      const card = await getCard('ja', 'SV2a-094');
+      expect(card.variants.map((v) => [v.key, v.summary?.market, v.tcgplayerId])).toEqual([
+        ['holo', 2.56, 566439],
+        ['reverse-pokeball', 13.78, 566638],
+        ['reverse-masterball', 701.17, 566791],
+      ]);
+      expect(card.imageFallback).toBe('https://tcgplayer-cdn.tcgplayer.com/product/566439_400w.jpg');
+    });
+
+    it('never prices a card with another set\'s file', async () => {
+      // An id whose last dash is not the set/number border: the file asked for ("sv8a") is not this card's set.
+      const stray = { ...jaCases['SV8a-084'].card, set: { ...jaCases['SV8a-084'].card.set, id: 'SV8' } };
+      fetchMock = withFiles({ sv8a: setFile('SV8a-084', 'sv8a') }, { 'SV8a-084': stray });
+      expect((await getCard('ja', 'SV8a-084')).variants.map((v) => v.summary?.source ?? null)).toEqual(['cardmarket', 'cardmarket', null]);
+    });
+
+    it('a price file that does not answer holds the card up for 4 seconds at most, then Cardmarket prices show', async () => {
+      vi.useFakeTimers();
+      const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'https://kid.example');
+        if (PRICE_FILE.test(url.pathname)) {
+          return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+        }
+        const out = tcgdexHandler(url, typeof init?.body === 'string' ? init.body : undefined);
+        return out === undefined ? new Response('{}', { status: 404 }) : new Response(JSON.stringify(out), { status: 200 });
+      });
+      vi.stubGlobal('fetch', fetchFn);
+      let card: CardDetail | undefined;
+      void getCard('ja', 'SV8a-084').then((c) => (card = c));
+      await vi.advanceTimersByTimeAsync(3999);
+      expect(card).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(card?.variants.map((v) => v.summary?.source ?? null)).toEqual(['cardmarket', 'cardmarket', null]);
+      // No retry of the price file, and the failure is not remembered: the next card of the set asks again.
+      expect(calledUrls(fetchFn).filter((u) => u.includes('tcgplayer-ja'))).toHaveLength(1);
+      void getCard('ja', 'SV8a-001');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calledUrls(fetchFn).filter((u) => u.includes('tcgplayer-ja'))).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(4000);
       vi.useRealTimers();
     });
   });

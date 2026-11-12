@@ -93,6 +93,23 @@ describe('ebayQuery', () => {
   it('marks Korean cards as Korean', () => {
     expect(ebayQuery({ ...hawlucha, lang: 'ko' })).toBe('Hawlucha sv8a 084/187 Korean');
   });
+
+  it('adds "master ball" for a Japanese or Korean Master Ball mirror, before the language', () => {
+    expect(ebayQuery(hawlucha, 'reverse-masterball')).toBe('Hawlucha sv8a 084/187 master ball Japanese');
+    expect(ebayQuery({ ...hawlucha, lang: 'ko' }, 'reverse-masterball')).toBe('Hawlucha sv8a 084/187 master ball Korean');
+    expect(ebayQuery(hawlucha, 'reverse-masterball-2')).toBe('Hawlucha sv8a 084/187 master ball Japanese');
+    // A trainer card goes by its code alone; the pattern still helps.
+    expect(ebayQuery({ ...hawlucha, name: 'ナンジャモ', dexIds: [], localId: '232' }, 'reverse-masterball')).toBe('sv8a 232/187 master ball Japanese');
+  });
+
+  it('every other printing searches the same words as before', () => {
+    for (const key of [undefined, '', 'normal', 'holo', 'reverse', 'reverse-pokeball', 'reverse-energy', 'firstEdition', 'masterball']) {
+      expect(ebayQuery(hawlucha, key)).toBe('Hawlucha sv8a 084/187 Japanese');
+    }
+    // English cards: sellers name the set, and TCGplayer-style variant words are not in their titles.
+    expect(ebayQuery(lopunny, 'reverse-masterball')).toBe('Lopunny 084/131 Prismatic Evolutions');
+    expect(ebayQuery(lopunny, 'reverse')).toBe('Lopunny 084/131 Prismatic Evolutions');
+  });
 });
 
 describe('ebayLinks', () => {

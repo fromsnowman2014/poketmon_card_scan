@@ -1,4 +1,4 @@
-# CI for pull requests; CI + GitHub Pages deploy for pushes to main.
+# CI for pull requests; CI + GitHub Pages deploy for pushes to main; once a day, fresh prices for Japanese cards.
 # One-time setup (see README "처음 배포하기 / First deploy"): the repo must be public (or on GitHub Pro), and
 # Settings → Pages → Source: "GitHub Actions". The base path comes from the Pages settings, so a renamed repo or a
 # custom domain needs no change here.
@@ -9,6 +9,17 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      all_products:
+        description: "Japanese card prices: read every TCGplayer product list again (card numbers), not only new ones"
+        type: boolean
+        default: false
+  schedule:
+    # Japanese card prices once a day. tcgcsv.com refreshes around 20:00 UTC: 21:17 picks that up, 03:17 is a second
+    # try that changes nothing when the first one worked. Off the hour, because GitHub starts schedules late at busy
+    # times. GitHub switches schedules off after 60 days without a commit (README "가격은 어디서 오나요?").
+    - cron: "17 21 * * *"
+    - cron: "17 3 * * *"
 
 # As in GitHub's Pages starter workflows: configure-pages reads the Pages site (needs Pages permission) and
 # deploy-pages publishes with an OIDC token.
@@ -26,7 +37,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      pages: ${{ steps.pages.outcome }}
+      # 'success' = publish this build. A scheduled run without new prices has nothing to publish.
+      pages: ${{ steps.publish.outputs.publish == 'true' && 'success' || 'skipped' }}
     env:
       DEPLOY: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     steps:
@@ -80,6 +92,25 @@ jobs:
             exit 1
           fi
 
+      # No internet: a small copy of tcgcsv's files and a stand-in server on this machine.
+      - name: Test price build script
+        run: node scripts/build-ja-prices.test.mjs
+
+      # Deploys only (pull requests never touch the network for this). TCGplayer prices for Japanese cards from
+      # tcgcsv.com, a free daily mirror: one small request tells whether it has anything newer than the files already
+      # on the site; then ~460 requests, one at a time, 150 ms apart (2-3 minutes; the very first run also reads every
+      # product list, about twice that). It never fails the run: when tcgcsv is down or its data looks broken, the
+      # files already on the site are published again, and with none Japanese cards show Cardmarket prices as
+      # before. The files land in public/data/tcgplayer-ja (git-ignored), which the build copies into dist.
+      - name: Japanese card prices (TCGplayer, via tcgcsv.com)
+        id: prices
+        if: steps.pages.outcome == 'success'
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          JA_PRICES_PREV: ${{ steps.pages.outputs.base_url }}/data/tcgplayer-ja/all.json
+        run: node scripts/build-ja-prices.mjs ${{ inputs.all_products && '--all-products --force' || '' }}
+
       - name: Type-check and build
         run: npm run build
         env:
@@ -87,7 +118,39 @@ jobs:
           # /<repo name>/. vite.config.ts normalises the slashes.
           BASE_PATH: ${{ steps.pages.outcome == 'success' && format('{0}/', steps.pages.outputs.base_path) || format('/{0}/', github.event.repository.name) }}
 
-      - if: steps.pages.outcome == 'success'
+      # Pushes and manual runs always publish. A scheduled run publishes only new prices (status "new"); "same"
+      # (nothing newer yet), "kept" (download failed, the site already has these files) and "none" change nothing.
+      - name: Publish this build?
+        id: publish
+        if: steps.pages.outcome == 'success'
+        env:
+          SCHEDULED: ${{ github.event_name == 'schedule' }}
+          PRICES: ${{ steps.prices.outputs.status || 'failed' }}
+          PRICES_DATE: ${{ steps.prices.outputs.date }}
+        run: |
+          echo "Japanese card prices: $PRICES ${PRICES_DATE:+($PRICES_DATE)}"
+          if [ "$SCHEDULED" = "true" ] && [ "$PRICES" != "new" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Scheduled run without new prices: nothing to publish."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          # The daily run turns red, so GitHub emails the repo owner, when the newest prices are three days old (the
+          # download keeps failing, or tcgcsv.com has stopped updating) or the price step has no files to show at
+          # all ("none": nothing on the site either; "failed": it crashed or ran out of time).
+          if [ "$SCHEDULED" = "true" ] && [ "$PRICES" != "new" ]; then
+            if [ -z "$PRICES_DATE" ]; then
+              echo "::error title=Japanese card prices could not be built::Status \"$PRICES\" (see the price step above). Price files already on the site stay as they are; the app shows Cardmarket prices for Japanese cards when there are none or they are 7 days old."
+              exit 1
+            fi
+            age_days=$(( ( $(date +%s) - $(date -d "$PRICES_DATE" +%s) ) / 86400 ))
+            if [ "$age_days" -ge 3 ]; then
+              echo "::error title=Japanese card prices are $age_days days old::No newer prices from tcgcsv.com since $PRICES_DATE ($PRICES; see the price step above). The app shows Cardmarket prices for Japanese cards once the files are 7 days old."
+              exit 1
+            fi
+          fi
+
+      - if: steps.publish.outputs.publish == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist

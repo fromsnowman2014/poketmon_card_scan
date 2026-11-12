@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "names": "node scripts/build-names.mjs",
-    "en-sets": "node scripts/build-en-sets.mjs"
+    "en-sets": "node scripts/build-en-sets.mjs",
+    "ja-prices": "node scripts/build-ja-prices.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

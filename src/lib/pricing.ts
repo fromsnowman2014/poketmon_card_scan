@@ -1,6 +1,7 @@
 // Price normalization (TCGdex → CardVariant/PriceSummary in USD), kid value tiers, money formatting.
 import type { CardVariant, CardmarketPrice, DisplayCurrency, PriceSummary, TcgplayerPrice, UiLang, ValueTier } from './types';
 import { eurToUsd, getRatesSync, type Rates } from './fx';
+import { matchJaVariants, type JaMatch, type JaSetFile, type JaVariantRef } from './tcgplayerJa';
 
 type Obj = Record<string, unknown>;
 
@@ -34,10 +35,11 @@ function toRawVariant(x: unknown): RawVariant {
   };
 }
 
-const FIRST_EDITION = '1st-edition';
-const isFirstEdition = (v: RawVariant) => !!v.stamp?.includes(FIRST_EDITION);
+/** TCGdex writes "1st-edition"; a few old Japanese sets (E1) have "1st edition". */
+const isFirstEditionStamp = (stamp: string) => stamp === '1st-edition' || stamp === '1st edition';
+const isFirstEdition = (v: RawVariant) => !!v.stamp?.some(isFirstEditionStamp);
 /** Stamps other than 1st edition: "gamestop", "set-logo", "pre-release", "player-rewards-program", "poketour-99"… */
-const otherStamps = (v: RawVariant) => (v.stamp ?? []).filter((s) => s !== FIRST_EDITION);
+const otherStamps = (v: RawVariant) => (v.stamp ?? []).filter((s) => !isFirstEditionStamp(s));
 const isOversize = (v: RawVariant) => !!v.size && v.size !== 'standard';
 /** "unlimited" is how TCGdex names the regular printing next to 1st edition / shadowless ones. */
 const plainSubtype = (v: RawVariant) => !v.subtype || v.subtype === 'unlimited';
@@ -75,11 +77,13 @@ function rawVariants(card: Obj, top: Obj): RawVariant[] {
 /**
  * The pricing block a variant should use. Entries with no own pricing (both sources null) borrow the card's
  * top-level pricing — except separate products (special foils, 1st edition, stamped, jumbo), which stay unpriced.
+ * `borrowed`: the block is the card's top-level one, not this printing's own.
  */
-function pricingFor(v: RawVariant, top: Obj): Obj {
+function pricingFor(v: RawVariant, top: Obj): { pricing: Obj; borrowed: boolean } {
   const own = v.pricing ?? {};
-  if (own.tcgplayer || own.cardmarket) return own;
-  return isSeparateProduct(v) ? {} : top;
+  if (own === top) return { pricing: top, borrowed: true };
+  if (own.tcgplayer || own.cardmarket) return { pricing: own, borrowed: false };
+  return isSeparateProduct(v) ? { pricing: {}, borrowed: false } : { pricing: top, borrowed: true };
 }
 
 function tcgplayerKey(v: RawVariant, tp: Obj): string | undefined {
@@ -184,6 +188,12 @@ const median = (xs: (number | null)[]) => {
 const HIGH_MAX_RATIO = 3;
 
 /**
+ * a ≤ b for prices, forgiving float rounding: exactly 3× must count as "within 3×" whatever the cents are
+ * (0.15 × 3 is 0.44999999999999996, so a plain compare drops a €0.45 average of a €0.15 card but keeps €0.09 of €0.03).
+ */
+const atMost = (a: number, b: number) => a <= b * (1 + 1e-9);
+
+/**
  * Cardmarket's trend, unless the recent sales (avg1, avg7, avg30) say it is junk: under a third of their median, or
  * over 3× every one of them (HIGH_MAX_RATIO). Cheap Japanese cards sell rarely, and their trend can be €0.02 while
  * they sell for €0.18–0.30 (SV8a-092), or €4.87 while they sell for €0.08–0.12 (SV2a-148).
@@ -193,7 +203,7 @@ function cardmarketTrend(cm: CardmarketPrice): number | null {
   const mid = median(recent);
   const top = maxOf(recent);
   if (cm.trend === null || mid === null || top === null) return cm.trend;
-  return cm.trend * HIGH_MAX_RATIO < mid || cm.trend > top * HIGH_MAX_RATIO ? null : cm.trend;
+  return atMost(mid, cm.trend * HIGH_MAX_RATIO) && atMost(cm.trend, top * HIGH_MAX_RATIO) ? cm.trend : null;
 }
 
 /** A cheapest listing from this much up can stand in for averages nobody sells near (below it, a few cents don't matter). */
@@ -216,13 +226,13 @@ function placeholderAverages(cm: CardmarketPrice): boolean {
  */
 function cardmarketMarket(cm: CardmarketPrice): number | null {
   const market = cm.trend === null ? cm.avg30 ?? cm.avg ?? cm.avg7 : cardmarketTrend(cm) ?? cm.avg7 ?? cm.avg30 ?? cm.trend;
-  const unsold = market !== null && cm.low !== null && cm.low >= LISTED_MIN_EUR && cm.low > HIGH_MAX_RATIO * market;
+  const unsold = market !== null && cm.low !== null && cm.low >= LISTED_MIN_EUR && !atMost(cm.low, HIGH_MAX_RATIO * market);
   return unsold && placeholderAverages(cm) ? cm.low : market;
 }
 
 function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketPrice | null | undefined, rates: Rates): PriceSummary {
   const toUsd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
-  const sane = (usd: number | null) => (usd !== null && usd <= HIGH_MAX_RATIO * market ? usd : null);
+  const sane = (usd: number | null) => (usd !== null && atMost(usd, HIGH_MAX_RATIO * market) ? usd : null);
   // TCGplayer's highPrice is the highest listing and often a 999/10000 placeholder. Without a sane one, the highest
   // sane number we have: mid, the cheapest Direct listing or what the card sells for on Cardmarket — each one checked
   // on its own (a spiky Cardmarket avg doesn't hide a sane trend), and the market price when none passes.
@@ -231,14 +241,19 @@ function summarizeTcgplayer(tcg: TcgplayerPrice, market: number, cm: CardmarketP
   // The trend comes from Cardmarket (another market): only when its price is in the same ballpark.
   const cmMarket = cm ? toUsd(cardmarketMarket(cm)) : null;
   const comparable = cmMarket !== null && cmMarket >= market / 2 && cmMarket <= market * 2;
+  // The cheapest listing, unless it is under a third of the market price: a lone 1-cent copy is not what the card
+  // costs ("$0.01 – $0.15" for a 10-cent card). Then the middle listing, else the market price. Never above it.
+  const usual = (usd: number | null) => (usd !== null && usd <= market && atMost(market, usd * HIGH_MAX_RATIO) ? usd : null);
   // Not rounded: amounts are rounded once, when shown (formatMoney), so a converted price isn't rounded twice.
   return {
     market,
-    low: tcg.low === null ? null : Math.min(tcg.low, market),
+    low: minOf([tcg.low, tcg.mid].map(usual)) ?? market,
     high: Math.max(high ?? market, market),
-    changePct: comparable ? changePct(cm, market) : null,
+    // An asking price is not a sale: no up/down badge next to it.
+    changePct: comparable && !tcg.asking ? changePct(cm, market) : null,
     source: 'tcgplayer',
     converted: false,
+    ...(tcg.asking ? { asking: true } : {}),
   };
 }
 
@@ -248,7 +263,7 @@ function summarizeCardmarket(cm: CardmarketPrice, market: number, rates: Rates):
   // average is left out: on a cheap card it is a single sale (€0.02, or €5.39 for a €1.29 card), and it can only
   // matter when it is the odd one out — the week's average already counts that day.
   const near = (eur: number | null) =>
-    eur !== null && eur <= market * HIGH_MAX_RATIO && eur * HIGH_MAX_RATIO >= market ? eur : null;
+    eur !== null && atMost(eur, market * HIGH_MAX_RATIO) && atMost(market, eur * HIGH_MAX_RATIO) ? eur : null;
   const usual = [cm.avg7, cm.avg30, cardmarketTrend(cm), market].map(near);
   // Exact USD, not whole cents: €0.04 is $0.0447 → 60원, where $0.04 would show 50원. formatMoney rounds for display.
   const usd = (eur: number | null) => (eur === null ? null : eurToUsd(eur, rates));
@@ -262,14 +277,17 @@ function summarizeCardmarket(cm: CardmarketPrice, market: number, rates: Rates):
   };
 }
 
-/** Display summary in USD: TCGplayer when it has a market/mid price, else Cardmarket converted from EUR. */
+/**
+ * Display summary in USD: TCGplayer when it has a market/mid price, else Cardmarket converted from EUR. A TCGplayer
+ * block marked `asking` (listings, no recent sales) gives its `mid` as the headline and marks the summary `asking`.
+ */
 export function summarize(
   tcg: TcgplayerPrice | null | undefined,
   cm: CardmarketPrice | null | undefined,
   rates: Rates,
   updated?: string,
 ): PriceSummary | null {
-  const tcgMarket = tcg ? (tcg.market ?? tcg.mid) : null;
+  const tcgMarket = tcg ? (tcg.asking ? tcg.mid : (tcg.market ?? tcg.mid)) : null;
   const cmMarket = cm ? cardmarketMarket(cm) : null;
   const summary =
     tcg && tcgMarket !== null
@@ -280,13 +298,39 @@ export function summarize(
   return summary && updated ? { ...summary, updated } : summary;
 }
 
-function toVariant(v: RawVariant, top: Obj, rates: Rates, taken: Set<string>): CardVariant {
-  const pricing = pricingFor(v, top);
-  const tp = pickTcgplayer(v, pricing.tcgplayer);
-  const cardmarket = pickCardmarket(v, pricing.cardmarket);
+/** A raw variant with the pricing it uses today, before any TCGplayer-Japan match. */
+interface Draft {
+  v: RawVariant;
+  pricing: Obj;
+  cardmarket: CardmarketPrice | null;
+  /**
+   * The Cardmarket block is the card-level "-holo" one a plain mirror borrows. It averages every mirror pattern
+   * (Poké Ball and Master Ball together: 2.1× the plain mirror's price in SV8a), so it is only a stand-in.
+   */
+  mixed: boolean;
+}
+
+function toDraft(v: RawVariant, top: Obj): Draft {
+  const { pricing, borrowed } = pricingFor(v, top);
+  return { v, pricing, cardmarket: pickCardmarket(v, pricing.cardmarket), mixed: borrowed && isPlainReverse(v) };
+}
+
+const toJaRef = ({ v, cardmarket, mixed }: Draft): JaVariantRef => ({
+  type: v.type,
+  ...(v.foil ? { foil: v.foil } : {}),
+  firstEdition: isFirstEdition(v),
+  tcgplayerId: price(v.thirdParty.tcgplayer) ?? undefined,
+  ownCardmarket: !mixed && cardmarket !== null && cardmarketMarket(cardmarket) !== null,
+});
+
+function toVariant({ v, pricing, cardmarket: ownOrBorrowed, mixed }: Draft, rates: Rates, taken: Set<string>, match: JaMatch | null): CardVariant {
+  const tp = match ? { price: match.price, productId: match.productId } : pickTcgplayer(v, pricing.tcgplayer);
+  // With its own TCGplayer product, a plain mirror no longer needs the mixed Cardmarket block: left in, it would
+  // set the range's high ($1.69 for a $0.60 card) and show under "More prices" as if it were this printing.
+  const cardmarket = match && mixed ? null : ownOrBorrowed;
   const summary = summarize(tp.price, cardmarket, rates);
   const updatedFrom = summary?.source === 'tcgplayer' ? pricing.tcgplayer : pricing.cardmarket;
-  const updated = asStr(asObj(updatedFrom).updated);
+  const updated = match && summary?.source === 'tcgplayer' ? match.updated : asStr(asObj(updatedFrom).updated);
   return {
     key: uniqueKey(v, taken),
     type: v.type,
@@ -297,32 +341,40 @@ function toVariant(v: RawVariant, top: Obj, rates: Rates, taken: Set<string>): C
     tcgplayer: tp.price,
     cardmarket,
     summary: summary && updated ? { ...summary, updated } : summary,
-    tcgplayerId: price(v.thirdParty.tcgplayer) ?? tp.productId,
+    // The matched product also gives cards TCGdex has no id for their TCGplayer link and picture.
+    tcgplayerId: match?.productId ?? price(v.thirdParty.tcgplayer) ?? tp.productId,
     cardmarketId: price(v.thirdParty.cardmarket) ?? price(asObj(pricing.cardmarket).idProduct) ?? undefined,
   };
 }
 
 /**
- * All printings of a raw TCGdex card with normalized USD prices, plus the key to show first: the most common
- * printing that has a price (see `commonness`), else the most common one.
+ * All printings of a raw TCGdex card with normalized USD prices, most common first (see `commonness`; API order
+ * among equals), plus the key to show first: the most common printing that has a price, else the most common one.
+ * Keys are given in API order before sorting, so they never depend on prices (My Cards stores them).
+ *
+ * `ja`: the set's TCGplayer-Japan price file (tcgplayerJa.getJaSetPrices), for Japanese cards only. A printing
+ * whose product is in it gets that TCGplayer price (exact dollars, `updated` = the file's time) and product id;
+ * the others, and every printing without a file, are priced as before (Cardmarket).
  */
-export function buildVariants(raw: unknown, rates: Rates): { variants: CardVariant[]; defaultVariant: string } {
+export function buildVariants(raw: unknown, rates: Rates, ja?: JaSetFile | null): { variants: CardVariant[]; defaultVariant: string } {
   const card = asObj(raw);
   const top = asObj(card.pricing);
   const taken = new Set<string>();
-  const rawList = rawVariants(card, top);
-  const variants = rawList.map((v) => toVariant(v, top, rates, taken));
-  const byCommonness = variants
-    .map((variant, i) => ({ variant, rank: commonness(rawList[i]) }))
+  const drafts = rawVariants(card, top).map((v) => toDraft(v, top));
+  const localId = typeof card.localId === 'number' ? String(card.localId) : (asStr(card.localId) ?? '');
+  const matches = ja ? matchJaVariants(localId, drafts.map(toJaRef), ja) : [];
+  const variants = drafts
+    .map((draft, i) => ({ variant: toVariant(draft, rates, taken, matches[i] ?? null), rank: commonness(draft.v) }))
     .sort((a, b) => a.rank - b.rank) // stable: API order among equals
     .map((x) => x.variant);
-  const def = byCommonness.find((v) => v.summary) ?? byCommonness[0];
+  const def = variants.find((v) => v.summary) ?? variants[0];
   return { variants, defaultVariant: def.key };
 }
 
 /**
  * Recomputes every variant's summary with `rates` (EUR→USD for Cardmarket prices). A CardDetail is built with the
  * rates known at fetch time, which may be the stale/fallback ones: call this when live rates arrive (useRates).
+ * TCGplayer summaries come out the same (dollars need no rate), with their `asking` mark and `updated` time.
  */
 export function applyRates<T extends { variants: CardVariant[] }>(card: T, rates: Rates): T {
   return {
@@ -388,6 +440,13 @@ function koWon(krw: number): string {
   if (eok === 0) return `${sign}${KO_NUM.format(man)}만 원`;
   return rest === 0 ? `${sign}${KO_NUM.format(eok)}억 원` : `${sign}${KO_NUM.format(eok)}억 ${KO_NUM.format(rest)}만 원`;
 }
+
+/**
+ * True when a summary's amounts are shown as approximate ("≈ $1.69", "약 2,290원"): converted from euros
+ * (Cardmarket), or an asking price (TCGplayer listings without recent sales).
+ */
+export const isApproxPrice = (summary: Pick<PriceSummary, 'converted' | 'asking'> | null | undefined): boolean =>
+  !!summary && (summary.converted || !!summary.asking);
 
 /**
  * "$0.45", "$12.34", "$1,234", "₩16,500", "—" for missing; approx adds "≈ ".

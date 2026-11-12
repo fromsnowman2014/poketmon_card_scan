@@ -64,10 +64,26 @@
 ## 가격은 어디서 오나요?
 
 - 카드 정보와 가격은 [TCGdex](https://tcgdex.dev) 에서 가져와요. **매일 업데이트**돼요.
-  - **TCGplayer** (미국, 달러) — 주로 영어 카드
-  - **Cardmarket** (유럽, 유로) — 일본 카드 포함. 원(또는 달러)으로 바꿔서 **약** 표시와 함께 보여 줘요. (예: `약 4,760원`, `약 $3.50`. 영어 화면은 `≈ $3.50`)
+  - **TCGplayer** (미국, 달러) — 영어 카드
+  - **Cardmarket** (유럽, 유로) — 원(또는 달러)으로 바꿔서 **약** 표시와 함께 보여 줘요. (예: `약 4,760원`, `약 $3.50`. 영어 화면은 `≈ $3.50`)
+- **일본 · 한국 카드**도 **TCGplayer (미국, 달러) 가격**으로 보여 줘요. TCGdex에는 이 가격이 없어서, TCGplayer 가격을 날마다 모아 두는
+  무료 사이트 [TCGCSV](https://tcgcsv.com) 에서 **하루에 한 번** 받아 와 앱과 함께 올려 둬요. (앱이 TCGCSV에 직접 물어보지는 않아요.)
+  - 일반 카드, 미러, 마스터볼 미러처럼 **반짝이 무늬마다 가격이 따로** 있어요.
+  - 최근에 팔린 적이 없는 카드는 **파는 사람이 부른 가격**을 **약** 표시와 함께 보여 줘요.
+  - TCGplayer에 없는 카드는 전처럼 **Cardmarket** 가격을 보여 줘요.
+  - 가격을 못 받아 온 날은 **전날 가격**을 그대로 써요. **7일 넘게** 새 가격이 없으면 앱이 다시 Cardmarket 가격을 보여 줘요.
+  - 한국 카드는 번호가 같은 **일본판 카드의 가격**이에요. 한글판은 가격이 다를 수 있어요.
 - 환율은 [open.er-api.com](https://open.er-api.com) (실패하면 Frankfurter)에서 가져와요.
 - **eBay**: 버튼을 누르면 eBay 검색 결과(경매 마감 임박순 · 즉시구매 최저가순 · 최근 팔린 순)가 열려요.
+
+### 일본 카드 가격 자동 업데이트 (저장소 관리자용)
+
+- GitHub Actions의 **Build & Deploy** 가 **하루에 한 번** 스스로 돌아요. 한국 시간 **아침 6시 17분쯤** (UTC 21:17) 새 가격을 받아서 앱을 다시 올리고,
+  혹시 실패했을까 봐 **낮 12시 17분쯤** (UTC 03:17) 한 번 더 확인해요. 새 가격이 없으면 아무것도 바꾸지 않아요.
+- ⚠️ GitHub는 저장소에 **60일 동안 새 커밋이 없으면** 이 자동 실행을 멈추고 메일로 알려 줘요.
+  그러면 **Actions → Build & Deploy → Enable workflow** 를 눌러 다시 켜요. 그대로 두면 7일 뒤부터 일본 카드가 Cardmarket 가격으로 돌아가요.
+- **사흘 넘게** 새 가격을 못 받으면 자동 실행이 빨간 ✗ 가 되고 GitHub가 메일을 보내요. TCGCSV가 잠깐 쉬는 것일 수 있으니 하루 이틀 기다려 봐요. 그래도 빨간색이면 실행을 눌러 맨 위 오류 문장을 읽어요.
+- 카드 번호나 무늬 이름이 이상하게 나오면 **Actions → Build & Deploy → Run workflow** 에서 `all_products` 를 켜고 실행해요. (모든 카드 번호를 다시 받아 와요.)
 
 ### 솔직한 한계
 
@@ -106,6 +122,7 @@ GitHub 무료 플랜에서는 **비공개(private) 저장소에 GitHub Pages를 
 4. 2–3분 뒤 초록 ✓ 가 뜨면 완성! 👉 **https://fromsnowman2014.github.io/poketmon_card_scan/**
    - 주소 모양: `https://<GitHub 사용자 이름>.github.io/<저장소 이름>/`
    - 이후에는 `main` 이 바뀔 때마다 자동으로 테스트 → 빌드 → 배포돼요. 저장소 이름을 바꾸거나 개인 도메인을 붙여도 설정은 그대로 두면 돼요.
+   - 일본 카드 가격도 하루에 한 번 자동으로 새로 받아 와요. ([알아 둘 점](#일본-카드-가격-자동-업데이트-저장소-관리자용): 60일 동안 커밋이 없으면 GitHub가 멈춰요.)
    - 빨간 ✗ 가 뜨면 실행을 눌러 맨 위 오류 문장을 읽어요. "GitHub Pages source is not GitHub Actions" 이면 2번에서 **GitHub Actions** 를 골랐는지 확인하고 3번을 다시 해요.
      노란 "Not deployed to GitHub Pages" 경고만 있으면 Pages가 아직 꺼져 있다는 뜻이에요 (2번부터).
 
@@ -125,7 +142,12 @@ GitHub 무료 플랜에서는 **비공개(private) 저장소에 GitHub Pages를 
 
 4. 몇 분 뒤 `https://<프로젝트 이름>.pages.dev/` 주소가 나와요. (예: `https://poketmon-card-scan.pages.dev/`) 이 주소를 아이폰에서 열어요.
    - 이후 `main` 이 바뀔 때마다 Cloudflare가 자동으로 다시 배포해요.
-   - GitHub Actions는 테스트만 하고 "Not deployed to GitHub Pages" 경고를 보여 줘요. 이 경우엔 정상이에요.
+   - GitHub Actions는 테스트만 하고 "Not deployed to GitHub Pages" 경고를 보여 줘요. 이 경우엔 정상이에요. (매일 자동 실행도 테스트만 하고 끝나요.)
+   - 이 방법에서는 일본 카드가 전처럼 **Cardmarket 가격**으로 나와요. TCGplayer 가격도 받으려면 (아직 Cloudflare에서 직접 시험해 보지는 못했어요):
+     Build command 를 `npm run ja-prices && npm run build` 로 바꾸고, Environment variables 에
+     `JA_PRICES_PREV` = `https://<프로젝트 이름>.pages.dev/data/tcgplayer-ja/all.json` 을 더해요.
+     그리고 프로젝트 **Settings** 의 **Deploy hooks** 에서 만든 주소를 하루에 한 번 불러서 다시 빌드되게 해요. (예: Cron Trigger를 쓰는 Cloudflare 워커.
+     하루에 한 번이면 충분해요. TCGCSV는 무료 사이트예요.)
 
 **3단계 — 아이폰에 설치하기**
 
@@ -145,12 +167,24 @@ npm run build          # 타입 검사 + 배포용 빌드 (dist/)
 npm run preview        # 빌드 결과 미리 보기
 npm run names          # 포켓몬 이름 데이터(EN/KO/JA) 다시 만들기 — PokeAPI
 npm run en-sets        # 영어 세트 약어 데이터 다시 만들기 — TCGdex
+npm run ja-prices      # 일본 카드 TCGplayer 가격 파일 만들기 — TCGCSV (아래 설명을 먼저 읽어요)
 node worker/test.mjs   # eBay 워커 테스트 (인터넷 필요 없음)
+node scripts/build-ja-prices.test.mjs   # 가격 파일 스크립트 테스트 (인터넷 필요 없음)
 ```
 
 - 구조와 모듈 설명: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - 기본 경로는 `/poketmon_card_scan/` 이에요. GitHub Actions 배포는 Pages 설정에서 경로를 자동으로 가져와 `BASE_PATH` 로 넘겨요.
   루트(`/`)에서 서비스하는 곳(Cloudflare Pages 등)은 `BASE_PATH=/ npm run build`.
+- 일본 카드의 TCGplayer 가격 파일(`public/data/tcgplayer-ja/`)은 저장소에 들어 있지 않아요. 배포할 때 GitHub Actions가 만들어요.
+  내 컴퓨터에 없으면 앱은 전처럼 Cardmarket 가격을 보여 줘요. 진짜 앱과 같은 가격으로 보고 싶으면 **이미 올라가 있는 파일을 복사**해 와요.
+  (TCGCSV에는 묻지 않아요. 복사한 다음 `npm run dev` 를 다시 시작해요.)
+
+  ```bash
+  npm run ja-prices -- --prev https://fromsnowman2014.github.io/poketmon_card_scan/data/tcgplayer-ja/all.json --prev-only
+  ```
+
+  옵션 없이 `npm run ja-prices` 만 쓰면 TCGCSV에서 직접 받아요 (처음엔 요청 약 900번, 몇 분 걸려요). TCGCSV는 무료로 운영되는 사이트라
+  **하루에 한 번 넘게 돌리지 마세요.** 매일 받는 일은 GitHub Actions가 이미 하고 있어요. 옵션 설명은 `scripts/build-ja-prices.mjs` 맨 위에 있어요.
 - 아이폰 카메라는 HTTPS(또는 localhost)에서만 켜져요. 내 컴퓨터에서 돌리는 개발 버전을 아이폰에서 카메라까지 쓰려면
   무료 Cloudflare 터널(`cloudflared tunnel --url http://localhost:5173`)로 HTTPS 주소를 만들어요. 순서는
   [docs/INSTALL.md](docs/INSTALL.md) Part 3에 있어요. (`*.trycloudflare.com` 주소는 vite.config.ts에서 이미 허용돼 있어요.)
@@ -158,13 +192,14 @@ node worker/test.mjs   # eBay 워커 테스트 (인터넷 필요 없음)
 ## 데이터 출처 · 감사
 
 - [TCGdex](https://tcgdex.dev) — 카드 데이터, 이미지, TCGplayer · Cardmarket 가격
+- [TCGCSV](https://tcgcsv.com) — 일본 카드 가격 (TCGplayer, 하루 한 번). 고마워요!
 - [PokeAPI](https://pokeapi.co) — 포켓몬 이름 (영어 · 한국어 · 일본어)
 - [Tesseract.js](https://tesseract.projectnaptha.com) — 폰 안에서 동작하는 글자 인식(OCR)
 - [open.er-api.com](https://www.exchangerate-api.com) · [Frankfurter](https://frankfurter.dev) — 환율
 
 ## 알림
 
-이 앱은 팬이 만든 비공식 무료 앱이에요. **Nintendo, The Pokémon Company, Creatures, GAME FREAK, eBay와 관련이 없어요.**
+이 앱은 팬이 만든 비공식 무료 앱이에요. **Nintendo, The Pokémon Company, Creatures, GAME FREAK, eBay, TCGplayer, Cardmarket과 관련이 없어요.**
 Pokémon 및 포켓몬 이름은 각 소유자의 상표예요. 카드 이미지와 가격 정보의 권리는 각 제공자에게 있어요.
 
 ---
@@ -198,9 +233,21 @@ Home Screen apps are not subject to Safari's 7-day storage limit (a Safari tab l
 **Scanning tips:** good light, fill the frame with the card, tilt to avoid glare (take it out of the sleeve if you can), and make sure the
 small code at the bottom-left — like `MEW EN 199/165` (Korean and Japanese cards: `sv8a 084/187`) — is sharp. You can always type the name or number instead.
 
-**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) and Cardmarket (EUR, converted and shown as approximate: "≈ $3.50", or "약 4,760원" / "약 $3.50" in the Korean UI).
+**Where prices come from:** [TCGdex](https://tcgdex.dev), updated daily — TCGplayer (USD) for English cards, and Cardmarket (EUR, converted and shown as approximate: "≈ $3.50", or "약 4,760원" / "약 $3.50" in the Korean UI).
+**Japanese and Korean cards** show TCGplayer prices too. TCGdex has none for them, so once a day they are taken from [TCGCSV](https://tcgcsv.com),
+a free daily copy of TCGplayer's prices, and published with the app (the app itself never calls TCGCSV). Each printing has its own price
+(normal, mirror, Master Ball mirror…). A card with no recent sales shows the sellers' asking price as approximate, and a card TCGplayer doesn't
+list shows its Cardmarket price as before. On a day the download fails, yesterday's prices stay; after 7 days without an update the app
+shows Cardmarket prices again. Korean cards show the price of the Japanese card with the same number; the Korean printing can cost something else.
 **Honest limits:** there is no free sold-price API (use the eBay "Sold" link), prices are estimates that depend on condition and grading,
 and some Japanese cards have no price data. **Ask a grown-up before buying or selling.**
+
+**Daily price update (repo owner):** the **Build & Deploy** workflow runs by itself once a day at 21:17 UTC, fetches the new Japanese-card
+prices and redeploys; a second run at 03:17 UTC is a retry and changes nothing when the first one worked. GitHub **pauses scheduled runs
+after 60 days without a commit** and emails you: turn them back on with **Actions → Build & Deploy → Enable workflow**. If you leave it
+off, Japanese cards go back to Cardmarket prices 7 days later. After 3 days without fresh prices the scheduled run turns red, so GitHub
+emails you; TCGCSV may just be having a break, so give it a day or two, and if the run stays red, open it and read the error at the top.
+If card numbers or pattern names ever look wrong, use **Run workflow** with `all_products` ticked to read every card number again.
 
 **Optional live eBay prices:** deploy the free Cloudflare worker — step-by-step guide in [worker/README.md](worker/README.md).
 Buy It Now prices and current auction bids there include shipping to the kid's country (within the US, or to Seoul for Korea; unknown shipping says "+ shipping").
@@ -226,7 +273,11 @@ Do this once, in a browser signed in to <https://github.com>; nothing to install
      framework preset `None`, build command `npm run build`, build output directory `dist`, environment variables `BASE_PATH` = `/` and
      `NODE_VERSION` = `22` (20+ works) → **Save and Deploy**. The app is served at `https://<project-name>.pages.dev/`
      (e.g. `https://poketmon-card-scan.pages.dev/`) and redeploys on every change to `main`. GitHub Actions then only runs the tests and
-     shows a "Not deployed to GitHub Pages" warning, which is expected.
+     shows a "Not deployed to GitHub Pages" warning, which is expected (the daily scheduled run does the same).
+     Hosted this way, Japanese cards keep showing **Cardmarket prices**. To get the TCGplayer prices too (not yet tried on a real
+     Cloudflare project): build command `npm run ja-prices && npm run build`, one more environment variable
+     `JA_PRICES_PREV` = `https://<project-name>.pages.dev/data/tcgplayer-ja/all.json`, and a **deploy hook** (in the project's
+     Settings) that something calls once a day, for example a Cloudflare Worker with a Cron Trigger. Once a day is enough: TCGCSV is a free site.
 3. **Install on iPhone:** open that address in **Safari → Share → Add to Home Screen → Add**.
 
 Pull requests run type-check, tests and build only. Local builds default to the base path `/poketmon_card_scan/`; use `BASE_PATH=/ npm run build` for hosts that serve from the root.
@@ -234,11 +285,25 @@ Pull requests run type-check, tests and build only. Local builds default to the 
 ### Development & credits
 
 **Development** (Node 22 recommended, 20+ works): `npm i`, `npm run dev`, `npm test`, `npm run build`, `npm run names` (regenerate Pokémon names from PokeAPI),
-`npm run en-sets` (regenerate English set abbreviations from TCGdex), `node worker/test.mjs`. Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+`npm run en-sets` (regenerate English set abbreviations from TCGdex), `node worker/test.mjs`, `node scripts/build-ja-prices.test.mjs`
+(tests the price-file script, no internet needed). Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+The Japanese-card price files (`public/data/tcgplayer-ja/`) are not in the repo: GitHub Actions builds them on every deploy. Without them
+your local app shows Cardmarket prices for Japanese cards, as before. To see the same prices as the live app, **copy the published files**
+(this does not contact TCGCSV), then restart `npm run dev`:
+
+```bash
+npm run ja-prices -- --prev https://fromsnowman2014.github.io/poketmon_card_scan/data/tcgplayer-ja/all.json --prev-only
+```
+
+Plain `npm run ja-prices` downloads from TCGCSV itself (about 900 requests and a few minutes the first time). TCGCSV is a free community
+site: **don't run it more than once a day** — the daily GitHub job already does. All options are listed at the top of `scripts/build-ja-prices.mjs`.
+
 To test your local version on an iPhone (the camera needs HTTPS), see [docs/INSTALL.md › Part 3](docs/INSTALL.md#part-3--put-a-dev-version-on-your-iphone).
 
-**Credits:** [TCGdex](https://tcgdex.dev) (cards, images, prices), [PokeAPI](https://pokeapi.co) (names),
+**Credits:** [TCGdex](https://tcgdex.dev) (cards, images, prices), [TCGCSV](https://tcgcsv.com) (Japanese card prices from TCGplayer, once a day — thank you!),
+[PokeAPI](https://pokeapi.co) (names),
 [Tesseract.js](https://tesseract.projectnaptha.com) (OCR), open.er-api.com and Frankfurter (exchange rates).
 
-**Disclaimer:** unofficial fan project, not affiliated with or endorsed by Nintendo, The Pokémon Company, Creatures, GAME FREAK or eBay.
+**Disclaimer:** unofficial fan project, not affiliated with or endorsed by Nintendo, The Pokémon Company, Creatures, GAME FREAK, eBay, TCGplayer or Cardmarket.
 Pokémon and Pokémon character names are trademarks of their respective owners.

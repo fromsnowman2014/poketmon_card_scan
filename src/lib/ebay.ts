@@ -28,8 +28,10 @@ const PROMO_SET = /promo/i;
  * "Pikachu with Grey Felt Hat 085 promo", "Galarian Moltres SWSH284" (never the TCGdex "Black Star Promos" name);
  * JA "Hawlucha sv8a 084/187 Japanese", promos "Pikachu 085/SV-P Japanese"; JA/KO trainers "sv8a 232/187 Japanese".
  * Japanese titles on eBay US are written in English, and the printed code is the most unique token.
+ * `variantKey` (the selected printing): a JA/KO Master Ball mirror ("reverse-masterball…") adds "master ball", the one
+ * pattern sellers name the same way: "Hawlucha sv8a 084/187 master ball Japanese". Other printings change nothing.
  */
-export function ebayQuery(card: EbayCard): string {
+export function ebayQuery(card: EbayCard, variantKey?: string): string {
   const printed = card.printedNumber ?? (card.setOfficialCount ? `${card.localId}/${card.setOfficialCount}` : card.localId);
   if (card.lang === 'en') {
     if (PROMO_SET.test(card.setName)) {
@@ -45,7 +47,8 @@ export function ebayQuery(card: EbayCard): string {
   // Trainers/energy have no English name here: the printed code (with its total) is specific enough on its own.
   const name =
     translateCardName(card.name, card.dexIds, 'en') ?? localizedName(card.dexIds, 'en') ?? (code.includes('/') ? '' : 'pokemon');
-  return collapse(`${name} ${code} ${card.lang === 'ko' ? 'Korean' : 'Japanese'}`);
+  const pattern = variantKey?.startsWith('reverse-masterball') ? 'master ball' : '';
+  return collapse(`${name} ${code} ${pattern} ${card.lang === 'ko' ? 'Korean' : 'Japanese'}`);
 }
 
 export function ebayLinks(query: string): EbayLinks {

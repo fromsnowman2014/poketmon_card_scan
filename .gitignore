@@ -8,3 +8,4 @@ test-results
 playwright-report
 .wrangler
 *.tsbuildinfo
+public/data

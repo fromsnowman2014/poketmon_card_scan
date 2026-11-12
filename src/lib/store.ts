@@ -2,6 +2,7 @@
 // Each key holds a versioned envelope { v, data }; anything unreadable falls back to defaults.
 import { useSyncExternalStore } from 'react';
 import { clearCache, writeWithRoom } from './cache';
+import { isApproxPrice } from './pricing';
 import { COUNTRIES, countryDefaults, guessCountry } from './region';
 import type {
   CardBrief,
@@ -288,31 +289,52 @@ function askPersistentStorage(): void {
   }
 }
 
+/** A saved exact price is kept this long before an approximate one may replace it. */
+const KEEP_EXACT_MS = 7 * 86_400_000;
+
+/**
+ * `item` with a newly checked price (approx: converted from euros, or an asking price), or `item` itself when
+ * nothing may change:
+ * - no price → the saved one stays, and so does its time;
+ * - an exact price (TCGplayer) is not replaced by an approximate one for 7 days: that is the Cardmarket stand-in
+ *   after a price file failed to load, not news about the card;
+ * - exact ↔ approximate is another market, not a move of the price: `rebased`, the first price starts again from
+ *   the new number (the caller also drops the card from the "since last week" baselines).
+ */
+function withPrice(item: CollectionItem, priceUsd: number | null, approx: boolean, now: Date): { item: CollectionItem; rebased: boolean } {
+  if (priceUsd === null) return { item, rebased: false };
+  const switched = item.priceUsd !== null && !!item.priceApprox !== approx;
+  const age = now.getTime() - Date.parse(item.priceUpdatedAt);
+  if (switched && approx && age < KEEP_EXACT_MS) return { item, rebased: false };
+  const firstPriceUsd = switched ? priceUsd : (item.firstPriceUsd ?? priceUsd);
+  return { item: { ...item, priceUsd, priceApprox: approx, priceUpdatedAt: now.toISOString(), firstPriceUsd }, rebased: switched };
+}
+
 /**
  * Adds one copy of the card's variant (qty+1 when already saved) and returns its collection key.
- * The variant's summary.market becomes priceUsd (and firstPriceUsd for a new entry); summary.converted priceApprox.
+ * The variant's summary.market becomes priceUsd (and firstPriceUsd for a new entry); priceApprox says whether it is
+ * approximate (pricing.isApproxPrice). An already saved copy takes the new price by updateCollectionPrice's rules.
  */
 export function addToCollection(card: CardDetail, variantKey: string): string {
   const key = collectionKey(card, variantKey);
   const summary = card.variants.find((v) => v.key === variantKey)?.summary;
   const price = summary?.market ?? null;
-  const approx = price !== null && !!summary?.converted;
+  const approx = price !== null && isApproxPrice(summary);
   const now = new Date().toISOString();
   const items = collection.get();
   askPersistentStorage();
 
   if (items.some((i) => i.key === key)) {
+    let rebased = false;
     collection.set(
-      items.map((i) =>
-        i.key === key
-          ? {
-              ...i,
-              qty: Math.min(i.qty + 1, MAX_QTY),
-              ...(price !== null && { priceUsd: price, priceApprox: approx, priceUpdatedAt: now }),
-            }
-          : i,
-      ),
+      items.map((i) => {
+        if (i.key !== key) return i;
+        const priced = withPrice(i, price, approx, new Date(now));
+        rebased = priced.rebased;
+        return { ...priced.item, qty: Math.min(i.qty + 1, MAX_QTY) };
+      }),
     );
+    if (rebased) dropFromBaselines(key);
     return key;
   }
 
@@ -354,18 +376,22 @@ export function setQuantity(key: string, qty: number): void {
   collection.set(collection.get().map((i) => (i.key === key ? { ...i, qty: n } : i)));
 }
 
-/** Stores a re-checked price (approx: converted from EUR). firstPriceUsd is filled if it was null. */
+/**
+ * Stores a re-checked price (approx: converted from euros or an asking price, pricing.isApproxPrice).
+ * firstPriceUsd is filled if it was null. Does nothing for a null price (the saved price and its time stay), nor
+ * when an approximate price would replace an exact one saved less than 7 days ago. When the price changes between
+ * exact and approximate (TCGplayer ↔ Cardmarket: two markets), the card starts over: firstPriceUsd becomes the
+ * new price and the card leaves the snapshot baselines, so neither gain/loss nor "since last week" shows the
+ * switch as a price move.
+ */
 export function updateCollectionPrice(key: string, priceUsd: number | null, approx = false): void {
-  const now = new Date().toISOString();
-  collection.set(
-    collection
-      .get()
-      .map((i) =>
-        i.key === key
-          ? { ...i, priceUsd, priceApprox: priceUsd !== null && approx, priceUpdatedAt: now, firstPriceUsd: i.firstPriceUsd ?? priceUsd }
-          : i,
-      ),
-  );
+  const items = collection.get();
+  const saved = items.find((i) => i.key === key);
+  if (!saved) return;
+  const { item, rebased } = withPrice(saved, priceUsd, approx, new Date());
+  if (item === saved) return;
+  collection.set(items.map((i) => (i === saved ? item : i)));
+  if (rebased) dropFromBaselines(key);
 }
 
 /**
@@ -443,7 +469,8 @@ function isHistoryItem(x: unknown): x is HistoryItem {
     optBool(x.priceApprox) &&
     isStr(x.viewedAt) &&
     isDexIds(x.dexIds) &&
-    optStr(x.imageFallback)
+    optStr(x.imageFallback) &&
+    optStr(x.variant)
   );
 }
 
@@ -456,8 +483,11 @@ export function useHistory(): HistoryItem[] {
   return useStore(recent);
 }
 
-/** Remembers a viewed card (newest first, one per card); approx: priceUsd was converted from EUR. */
-export function pushHistory(card: CardDetail, priceUsd: number | null, approx = false): void {
+/**
+ * Remembers a viewed card (newest first, one per card); approx: priceUsd is approximate (pricing.isApproxPrice).
+ * `variantKey`: the printing whose price this is, so Recent can open the card on it again.
+ */
+export function pushHistory(card: CardDetail, priceUsd: number | null, approx = false, variantKey?: string): void {
   const item: HistoryItem = {
     id: card.id,
     lang: card.lang,
@@ -471,6 +501,7 @@ export function pushHistory(card: CardDetail, priceUsd: number | null, approx = 
     viewedAt: new Date().toISOString(),
     dexIds: card.dexIds,
     imageFallback: card.imageFallback,
+    ...(variantKey ? { variant: variantKey } : {}),
   };
   const rest = recent.get().filter((h) => !(h.id === card.id && h.lang === card.lang));
   recent.set([item, ...rest].slice(0, MAX_HISTORY));
@@ -528,6 +559,20 @@ function sameCards(a: SnapshotCards | undefined, b: SnapshotCards): boolean {
   if (!a) return false;
   const keys = Object.keys(b);
   return keys.length === Object.keys(a).length && keys.every((k) => a[k]?.[0] === b[k][0] && a[k]?.[1] === b[k][1]);
+}
+
+/** Takes a card out of every snapshot's per-card data: its saved prices are from another market than its new one. */
+function dropFromBaselines(key: string): void {
+  const list = snapshots.get();
+  if (!list.some((s) => s.cards && key in s.cards)) return;
+  snapshots.set(
+    list.map((s) => {
+      if (!s.cards || !(key in s.cards)) return s;
+      const cards = { ...s.cards };
+      delete cards[key];
+      return { ...s, cards };
+    }),
+  );
 }
 
 /** Oldest first, one per local day, max 120. */

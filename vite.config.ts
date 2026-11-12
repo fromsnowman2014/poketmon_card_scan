@@ -53,6 +53,14 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         runtimeCaching: [
           {
+            // Our own daily TCGplayer price files for Japanese cards (scripts/build-ja-prices.mjs, data/tcgplayer-ja/).
+            // They change once a day: network first, the cached copy is for offline and slow networks. Each file says
+            // how old it is, and the app ignores one older than 7 days. Never precached (globPatterns has no json).
+            urlPattern: ({ sameOrigin, url }) => sameOrigin && /\/data\/tcgplayer-ja\/.+\.json$/.test(url.pathname),
+            handler: 'NetworkFirst',
+            options: { cacheName: 'tcgplayer-ja', networkTimeoutSeconds: 3, expiration: { maxEntries: 60, maxAgeSeconds: 60 * 60 * 24 * 7 } },
+          },
+          {
             // Card images loaded without CORS: Japanese TCGdex images send their CORS headers twice, which browsers
             // reject, so CardImage retries them as plain images. Those responses are opaque (status 0, and counted
             // as several MB each against storage), so they get their own small cache and never evict the rest.

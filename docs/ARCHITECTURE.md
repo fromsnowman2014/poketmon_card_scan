@@ -9,7 +9,8 @@ an **optional** Cloudflare Worker (`/worker`) unlocks live eBay listing prices.
 | What | Source | Notes |
 |---|---|---|
 | Card data, images, set lists (EN / JA / KO) | [TCGdex API](https://tcgdex.dev) `https://api.tcgdex.net/v2/{lang}/…` | No key, CORS `*` |
-| Prices | TCGdex `pricing` → **TCGplayer** (USD, EN cards) and **Cardmarket** (EUR, also JA cards) | Converted to USD for display |
+| Prices, English cards | TCGdex `pricing` → **TCGplayer** (USD) and **Cardmarket** (EUR) | Converted to USD for display |
+| Prices, Japanese cards (and Korean cards, which read the Japanese data) | **TCGplayer** (USD) from our own daily files `data/tcgplayer-ja/s/<set>.json`, built in CI from [tcgcsv.com](https://tcgcsv.com) (a free daily mirror of TCGplayer; category 85 = Pokémon Japan); TCGdex's **Cardmarket** block is the fallback | One product per printing (normal / mirror / Master Ball mirror …). See "Japanese card prices" |
 | Currency rates | `open.er-api.com` → `api.frankfurter.dev` → jsDelivr `@fawazahmed0/currency-api` | CORS `*`, 3.5 s each, no retry, cached 12h (kept as "last known"), hard-coded fallback |
 | Pokémon names KO/JA/EN | `src/data/pokemon-names.json` generated from PokeAPI CSV (`npm run names`) | `[dexId, en, ko, ja][]` |
 | EN set abbreviations | `src/data/en-sets.json` generated from TCGdex (`npm run en-sets`) | `[{id, abbr, official, total, name, releaseDate}]` — printed "PAR EN 123/182" → `sv04` |
@@ -44,6 +45,8 @@ src/
   data/pokemon-names.json, en-sets.json   generated data (scripts/)
 worker/                          optional eBay proxy (Cloudflare Worker) (ebay)
 scripts/build-names.mjs, build-en-sets.mjs   data generators (npm run names / en-sets)
+scripts/build-ja-prices.mjs (+ .test.mjs, fixtures/)   daily TCGplayer price files for Japanese cards (npm run ja-prices)
+public/data/tcgplayer-ja/        those files (git-ignored; built in CI, copied into dist)
 .github/workflows/deploy.yml     GitHub Pages deploy                   (ebay/infra)
 ```
 
@@ -258,6 +261,8 @@ export function getSets(lang: CardLang): Promise<SetInfo[]>;                    
 //   Fetched with one GraphQL POST (/v2/graphql — the REST list has no releaseDate); falls back to REST /v2/{lang}/sets.
 export function getCard(lang: CardLang, id: string): Promise<CardDetail>;           // cached 30min, builds variants via pricing.ts
 //   'ko' reads ja. Never waits for exchange rates (last known ones; live rates load in the background).
+//   Japanese data also loads the set's TCGplayer price file (tcgplayerJa.getJaSetPrices) in the same Promise.all:
+//   it never fails, gives up after 4 s, and without it the card has its Cardmarket prices.
 //   rarity "None" dropped; setOfficialCount undefined for promo sets (JA official 0, ids ending "-P", EN "… Promos");
 //   printedNumber always set (see below); imageFallback = TCGplayer CDN 400w image of the first variant's tcgplayer
 //   product id. 404 → HttpError status 404.
@@ -293,7 +298,10 @@ export function splitCardId(id: string, localId?: string): { setId: string; loca
 
 ### lib/pricing.ts
 ```ts
-export function buildVariants(raw: unknown, rates: Rates): { variants: CardVariant[]; defaultVariant: string };
+export function buildVariants(raw: unknown, rates: Rates, ja?: JaSetFile | null): { variants: CardVariant[]; defaultVariant: string };
+//   variants come most common first (the order the picker shows); keys are given in API order before sorting.
+//   ja: the set's TCGplayer-Japan file (lib/tcgplayerJa.ts), Japanese cards only — see "Japanese card prices".
+export const isApproxPrice: (summary) => boolean;   // converted (Cardmarket, euros) or asking (TCGplayer listings, no sales)
 export function summarize(tcg: TcgplayerPrice | null | undefined, cm: CardmarketPrice | null | undefined, rates: Rates, updated?: string): PriceSummary | null;
 export function applyRates<T extends { variants: CardVariant[] }>(card: T, rates: Rates): T;  // re-summarizes every variant with new rates
 export function valueTier(usd: number | null | undefined, currency?: DisplayCurrency /* 'USD' */, rates?: Rates): ValueTier;
@@ -315,7 +323,10 @@ export function formatMoney(usd: number | null | undefined, currency: DisplayCur
 //   "-holo" fields and TCGplayer "reverse-holofoil".
 // defaultVariant: the most common printing that has a price — normal > holo > other regular printings (shadowless…) >
 //   1st edition > reverse > special foils > stamped/jumbo — else the most common one.
-// summarize: TCGplayer when it has market ?? mid: low = min(low, market); high = TCGplayer high if ≤ 3× market
+// summarize: TCGplayer when it has market ?? mid (a block marked `asking` gives its mid and marks the summary
+//   `asking`: listings without recent sales, shown as an approximate "asking price", no trend badge).
+//   low = the smaller of low and mid that lies between a third of market and market, else market (a lone 1-cent
+//   listing is not what the card costs: "$0.01 – $0.15" for a 10-cent card); high = TCGplayer high if ≤ 3× market
 //   (HIGH_MAX_RATIO), else the largest of mid, directLow and Cardmarket avg / avg30 / trend in USD that is itself
 //   ≤ 3× market (each checked on its own, so one spiky average doesn't hide a sane trend); market when none passes;
 //   always ≥ market.
@@ -331,7 +342,54 @@ export function formatMoney(usd: number | null | undefined, currency: DisplayCur
 //   headline) Cardmarket's price is within 0.5–2× of it; else null. null without a headline. Amounts are exact USD, never
 //   rounded to cents (€0.04 = $0.0447 → "약 60원", not the 50원 a rounded $0.04 gives); only formatMoney rounds.
 //   valueTier compares the amount as shown (whole cents; 10/100-won steps).
+//   Every "within 3×" test forgives float rounding (exactly 3× counts: 0.15 × 3 is 0.4499… in floats).
 ```
+
+### lib/tcgplayerJa.ts — Japanese card prices
+
+TCGdex has no TCGplayer prices for Japanese cards, only the product id of some printings, so the prices come from our
+own files (see "Daily price files" under PWA & offline).
+
+```ts
+export type JaRow = [market, low, mid, high];                        // USD, null = no data
+export type JaProduct = [number: string, tags: string, rows: Record<string, JaRow>];
+export interface JaSetFile { v: 1; d: string /* when TCGplayer's prices were taken */; k: string; g: JaGroup[] }
+export function setKey(setId: string): string;                       // "SV8a" → "sv8a", "SM1+" / "SM1p" → "sm1p"
+export function getJaSetPrices(setId: string): Promise<JaSetFile | null>;
+//   `${BASE_URL}data/tcgplayer-ja/s/<key>.json`, 4 s timeout, no retries, memory cache 6 h. Never rejects. null:
+//   no file (404, or the app's HTML with status 200 on SPA hosts and `npm run dev`; remembered), a file older than
+//   7 days, a network error (tried again next time), no page address (node tests).
+export function matchJaVariants(localId, variants: JaVariantRef[], file): (JaMatch | null)[];   // pure
+```
+
+How one printing of a Japanese card gets its price (`tcgdex.getCard` loads the set file next to the card;
+`pricing.buildVariants` asks `matchJaVariants`):
+
+1. **Product.** (a) TCGdex's own TCGplayer id, when it is in the file (an id that is not there is a product without
+   prices: nothing else is tried). (b) Otherwise card number + printing: the product whose number equals the card's
+   (leading zeros and case ignored) and whose name tag says the same printing — no tag = the base card, "Mirror Foil" /
+   "Mirror Holo(foil)" = plain mirror, "Master Ball Pattern" = masterball, "Poke Ball Pattern" = pokeball, "Energy Symbol
+   Pattern" = energy, "<X> Ball Pattern" = `<x>ball`, "Team Rocket Pattern" = team-rocket; other brackets belong to the
+   card's name — only when exactly one product fits and the card has one variant of that kind. (c) For a plain mirror
+   only: the one product with that number that is not the base card and is still unclaimed (M2a lists a "reverse"
+   where TCGplayer sells a "Poke Ball Pattern"). A product is never given to two variants. Half of the Japanese sets
+   (SV2a, M2a, SV9a, the Sun & Moon era …) have no ids in TCGdex and are priced through (b).
+2. **Row.** A Japanese product is one printing, so any of its rows is the right card; the order only prefers the
+   likelier one (holo-ish: holofoil, unlimited-holofoil, normal …; plain: normal, unlimited, holofoil …; 1st-edition
+   stamps: the 1st-edition rows first). A row without a market price gives way to its normal/holofoil twin that has one.
+3. **Price.** Market price present → an exact TCGplayer price (`source: 'tcgplayer'`, `updated` = the file's time).
+   No market price (listings, no recent sales): the variant's own Cardmarket price stays if it has one; otherwise the
+   asking price is shown as approximate (`asking`): the middle listing, or the cheapest when the middle is over 3× it
+   and it is at least $5; a lone listing of $100 or more is no price at all.
+4. **Cardmarket next to it.** A variant's own Cardmarket block is kept (trend badge, More prices). The card-level
+   "-holo" block a plain mirror borrows is dropped once the mirror has its own TCGplayer product: it averages every
+   mirror pattern together (2.1× the plain mirror's price in SV8a).
+5. **Fallback.** No file, no product, or no usable row → exactly the Cardmarket logic below (a plain mirror then
+   shows the mixed "-holo" number, labelled "all mirror patterns together"; a Master Ball mirror has no price).
+
+Measured on 3,341 cached cards of 22 sets: 793 printings go from "No price" to priced (223 Master Ball mirrors), none
+lose a price, 1 default printing changes. No cross-check against Cardmarket for market-priced rows: on cheap cards the
+two markets differ by 3× for honest reasons, and above $25 nearly every disagreement is a Cardmarket placeholder.
 
 ### lib/imageProc.ts / lib/parseCode.ts / lib/ocr.ts / lib/identify.ts (scan)
 Import these only from the Scan screen and its parts (`screens/scan/*`, a lazy chunk): ocr.ts loads tesseract.js with a
@@ -430,7 +488,9 @@ JA cards come without them: "Umbreon ex sv8a 217/187 Japanese" instead of "pokem
 ### lib/ebay.ts
 ```ts
 export type EbayCard = Pick<CardDetail, 'name' | 'lang' | 'localId' | 'setId' | 'dexIds' | 'setName' | 'setOfficialCount' | 'printedNumber'>;
-export function ebayQuery(card: EbayCard): string;
+export function ebayQuery(card: EbayCard, variantKey?: string): string;
+//   variantKey: a JA/KO Master Ball mirror ("reverse-masterball…") adds "master ball" ("Hawlucha sv8a 084/187 master
+//   ball Japanese"), the one pattern sellers name the same way; other printings change nothing.
 //   EN "Lopunny 084/131 Prismatic Evolutions"; subsets use the parent set ("Zekrom TG05/TG30 Brilliant Stars");
 //   EN promos "Pikachu with Grey Felt Hat 085 promo", "Galarian Moltres SWSH284" (never "Black Star Promos");
 //   JA "Hawlucha sv8a 084/187 Japanese", promos "Pikachu 085/SV-P Japanese"; JA/KO trainers "sv8a 232/187 Japanese"
@@ -483,6 +543,11 @@ export function addToCollection(card: CardDetail, variantKey: string): string; /
 export function removeFromCollection(key: string): void;                       // also drops its thumb
 export function setQuantity(key: string, qty: number): void;                    // floors, max 999, ≤ 0 removes
 export function updateCollectionPrice(key: string, priceUsd: number | null, approx?: boolean): void; // firstPriceUsd filled if null
+//   A null price changes nothing (not even the check time). An approximate price (Cardmarket, or an asking price)
+//   does not replace an exact one saved less than 7 days ago (a failed price-file fetch must not turn $0.18 into
+//   ≈ $0.03). When the price switches between exact and approximate (two markets), the card starts over:
+//   firstPriceUsd = the new price and the card leaves the snapshot baselines, so gain/loss and "since last week"
+//   don't show the switch as a price move.
 export function onCollectionSaveFailed(listener: () => void): () => void;
 //   Fires when a change to My Cards could not be written even after writeWithRoom freed cache space (App shows a
 //   "couldn't save" toast, at most once a minute). The change still shows until the app is closed.
@@ -491,7 +556,8 @@ export function useCollectionThumbs(): Readonly<Record<string, string>>;       /
 export function rememberScanPhoto(cardId: string, dataUrl: string): void;      // memory only, last 10 (Scan → Card screen)
 export function getScanPhoto(cardId: string): string | undefined;
 export function useHistory(): HistoryItem[];                                   // newest first, max 20, one per card
-export function pushHistory(card: CardDetail, priceUsd: number | null, approx?: boolean): void;   // approx → HistoryItem.priceApprox
+export function pushHistory(card: CardDetail, priceUsd: number | null, approx?: boolean, variantKey?: string): void;
+//   approx → HistoryItem.priceApprox; variantKey → HistoryItem.variant (the printing the kid looked at; Recent reopens on it)
 export function clearHistory(): void;
 export function useSnapshots(): ValueSnapshot[];                               // oldest first, one per local day, max 120
 export function recordSnapshot(items: readonly CollectionItem[]): void;          // upsert today's total + per-card [usd, qty] (no-op when unchanged)
@@ -582,6 +648,7 @@ Runtime caches:
 
 | Cache | URLs | Strategy |
 |---|---|---|
+| `tcgplayer-ja` (first rule) | our own `data/tcgplayer-ja/*.json` price files | NetworkFirst, 3 s timeout, 60 entries, 7 days. Never precached, so a daily redeploy with new prices leaves `sw.js` byte-identical and prompts no app update |
 | `card-data` | `api.tcgdex.net` GET requests (POST GraphQL is not cached; `cache.ts` keeps those results in localStorage) | NetworkFirst, 8 s timeout, 7 days |
 | `card-images-opaque` (first rule) | `assets.tcgdex.net` requests made without CORS (`request.mode === 'no-cors'`): pictures whose CORS headers come twice, which browsers reject — every Japanese one and a few English ones (e.g. sv03-125) — so `CardImage` loads every `assets.tcgdex.net/ja/` picture plain from the start and retries the few English ones plain after a CORS failure. Nothing reads card picture pixels, so no picture needs CORS | CacheFirst, status 0 only, 60 entries (each opaque response counts several MB of quota), 30 days, purged on quota errors |
 | `card-images` | `assets.tcgdex.net` with CORS — `CardImage` loads EN pictures with `crossOrigin="anonymous"` so the responses are cacheable normally | CacheFirst, 600 entries, 30 days |
@@ -592,8 +659,45 @@ After one online scan the OCR engine works offline; matching the code still need
 find cards that were looked up before. Cards opened online (EN and JA pictures) show their picture offline. TCGplayer
 fallback images have no CORS headers and stay in the browser's HTTP cache only.
 
+### Daily price files (`data/tcgplayer-ja/`)
+
+`scripts/build-ja-prices.mjs` (Node, no dependencies; `npm run ja-prices`; options at the top of the file) writes
+`s/<key>.json` (one per TCGplayer set code; the only files the app reads), `index.json` (date, counts) and `all.json`
+(everything, read only by the next run) into `public/data/tcgplayer-ja/`, which is git-ignored and copied into `dist`.
+
+```json
+{"v":1,"d":"2026-11-11T20:05:27Z","k":"sv8a","g":[{"id":23909,"n":"SV8a: Terastal Fest ex","c":1,
+ "p":{"602464":["084/187","",{"normal":[0.18,0.01,0.17,1],"holofoil":[0.17,0.01,0.2,0.99]}],
+      "602465":["084/187","Mirror Foil",{"holofoil":[0.6,0.34,0.63,1.84]}],
+      "604564":["084/187","Master Ball Pattern",{"holofoil":[2.27,2.27,3.15,7]}]}}]}
+```
+
+Product = `[card number as TCGplayer writes it, name tags joined by "|", rows]`; row = `[market, low, mid, high]`;
+`c: 1` = numbers and tags are filled in for the group. Sets whose TCGdex id is not a TCGplayer code get alias files
+(`SET_ALIASES`: bw8a, pmcg1…6).
+
+CI (`.github/workflows/deploy.yml`): the price step runs on deploy runs only (pushes to main, manual runs, and the
+daily schedule at 21:17 and 03:17 UTC; tcgcsv refreshes around 20:00 UTC). It first copies the files already on the
+site (`JA_PRICES_PREV` = the live `all.json`), asks tcgcsv's `last-updated.txt` whether anything is newer (1 request),
+and only then downloads: one request at a time, 150 ms apart, own User-Agent, product lists only for new or changed
+groups (first run ~900 requests, later ~460). It never fails the run: a broken or partial download (fewer than 90% of
+yesterday's groups or rows, under half the rows with a market price, a 429 …) keeps yesterday's files. A scheduled
+run publishes only when the prices are new and turns red after three days without fresh ones; pull requests never
+touch the network (the script's own test uses a fixture and a stand-in server). GitHub pauses schedules after 60 days
+without a commit; the app then falls back to Cardmarket once the files are 7 days old.
+
+Known limits: republishing TCGplayer-derived prices is a grey area of TCGplayer's terms (tcgcsv itself says
+"permission is implicit" and asks apps to sync once a day into their own cache, never from the browser): the source
+label and product link stay visible, only the latest snapshot is published, and deleting the price step returns the
+app to Cardmarket prices by itself. Sets without a TCGplayer group or set code (neo, e-Card, PCG … about a fifth of
+the cards) keep Cardmarket or no price. Korean cards show the Japanese card's price. Cheap commons cost about three
+times more on TCGplayer than on Cardmarket, so prices and tiers of saved Japanese cards moved once when this landed
+(`store.updateCollectionPrice` rebases a card whose price switches between the two markets).
+
 ## Price logic (summary)
 
+* Japanese cards take TCGplayer's price per printing from the daily files when the product is found (see
+  "lib/tcgplayerJa.ts"); the rules below then apply to that TCGplayer block, and to Cardmarket when there is none.
 * Headline **시세 / Market**: TCGplayer `marketPrice` (fallback `midPrice`) for the selected variant; if no TCGplayer data,
   Cardmarket `trend` (fallback `avg30`, `avg`, `avg7`; a junk trend gives way to `avg7`/`avg30`; averages nobody sells
   near, placeholders on some foil products, give way to the cheapest copy) converted EUR→USD and
