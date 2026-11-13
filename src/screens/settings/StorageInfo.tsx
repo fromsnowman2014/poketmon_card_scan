@@ -155,8 +155,8 @@ export function StorageInfo() {
   const app = check.kind === 'in-app' ? inAppLabel(check, lang) : undefined;
   const place = app ? t('inAppNamed', { app }) : t(check.kind);
   const count = items.reduce((n, i) => n + i.qty, 0);
-  // Not saved now, or storage refused the check at startup (nothing tried to save since).
-  const problem = !save.saved ? (save.problem ?? 'unknown') : check.probe !== 'ok' ? check.probe : undefined;
+  // Not saved now, or storage refused the check at startup and no save has worked since.
+  const problem = !save.saved ? (save.problem ?? 'unknown') : check.probe !== 'ok' && !save.lastSavedAt ? check.probe : undefined;
   const why = problem === 'blocked' || problem === 'full' ? t(problem) : t('why');
 
   const rows: [label: string, value: ReactNode][] = [

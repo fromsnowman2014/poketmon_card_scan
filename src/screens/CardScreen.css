@@ -846,6 +846,27 @@ button.card-art:active {
   min-height: 44px;
 }
 
+/* This card is saved; another change isn't: the same box, without the alarm. */
+.card-unsaved-other {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.card-unsaved-other .card-unsaved-text {
+  color: var(--text-muted);
+}
+
+.card-unsaved-still {
+  flex-basis: 100%;
+  margin: 0;
+  font-weight: 700;
+}
+
+/* Focused only by the app after "try again" worked: no ring for that, but keep the keyboard one. */
+.card-owned-label:focus:not(:focus-visible) {
+  outline: none;
+}
+
 /* ---------- eBay ---------- */
 
 .card-ebay {

@@ -591,11 +591,17 @@ export function backupCardCount(items: readonly unknown[]): number;   // copies 
 ```
 
 ### lib/mirror.ts (IndexedDB copy of My Cards)
-- `saveMirror(data)` copies the stored My Cards array after every successful save (debounced 500 ms; store.ts flushes at
-  once for removals and resets, and on pagehide / when the page is hidden); `readMirror()` returns it or null (no
-  IndexedDB, an error, or no answer within 3 s). DB "cardcheck", store "kv", key "collection", record
-  `{ v: 1, at, data }`. `setMirrorBackend()` swaps in a stand-in for tests. Restore-only: localStorage stays the main
-  copy (store.restoreFromMirror). It can't help across storage areas: IndexedDB lives in the same one.
+- `saveMirror(data, gen)` copies the stored My Cards array, with the save counter of that localStorage list, after
+  every successful save (debounced 500 ms; store.ts flushes at once for removals, and on pagehide / when the page is
+  hidden). A failed write is kept for the next flush unless a newer copy is waiting.
+- `readMirror()` → `{ data, gen }` (gen 0 for a copy from before the counter), `null` when there is no copy yet, or
+  `undefined` when it could not be read (no IndexedDB, an error, or no answer within 3 s).
+- Nothing is written before a read has worked in this session: a copy that could not be read may hold the very cards
+  localStorage lost, so it must not be overwritten (store.restoreFromMirror reads it right after startup).
+- `clearMirror(gen)` (Reset all data) empties it at once, without that read.
+- DB "cardcheck", store "kv", key "collection", record `{ v: 1, at, data, gen }`. `setMirrorBackend()` swaps in a
+  stand-in for tests. Restore-only: localStorage stays the main copy. It can't help across storage areas: IndexedDB
+  lives in the same one.
 
 ### lib/store.ts (useSyncExternalStore-based, persisted to localStorage)
 ```ts
@@ -625,7 +631,8 @@ export function onCollectionSaveFailed(listener: () => void): () => void;
 export function useCollectionSaveState(): CollectionSaveState;                 // { saved, problem?: 'blocked'|'full'|'unknown', lastSavedAt? }
 export function getCollectionSaveState(): CollectionSaveState;
 export function retryCollectionSave(): boolean;                                 // writes what My Cards shows again
-export function onCollectionRestored(listener: (count: number) => void): () => void; // cards put back from the IndexedDB copy
+export function isCardSaved(key: string): boolean;                             // storage holds this card as shown (same qty)
+export function onCollectionRestored(listener: (count: number) => void): () => void; // copies (Σ qty) put back from the IndexedDB copy
 export function restoreFromMirror(): Promise<number>;                           // runs once after the first read (browser only)
 export function exportCollection(): CollectionItem[];                           // what My Cards shows, for backups
 export function importCollection(items: readonly unknown[]): ImportResult;     // merge a backup by key; never removes
@@ -657,9 +664,16 @@ export function resetAllData(): void;                                           
 //   - stored entries this version can't validate are hidden but written back untouched; a value it can't read at all
 //     (a newer app) is never written over (the change shows, marked not saved);
 //   - a save is read back 1.5 s later (Safari's setItem returns before its storage process writes, and quietly goes
-//     back to the old value when that write fails); one more try, then "not saved";
-//   - a copy lives in IndexedDB (lib/mirror.ts, written after every successful save, debounced 500 ms, at once for
-//     removals and resets); restoreFromMirror puts back cards localStorage lost and tells onCollectionRestored.
+//     back to the old value when that write fails); one more try, then "not saved". Memory keeps the change: storage
+//     having gone back to the old list never wins over it (a tap in the meantime builds on what the kid sees, and the
+//     next save or "try again" writes it). Coming back to the app, or another tab saving, doesn't cancel the read-back;
+//     another tab's list is taken with the cards only this page has, and saved again;
+//   - "cc:collection" also holds a save counter, { v: 1, data, gen }: every save writes the highest gen this page knows
+//     + 1 (stored lists, its own saves, the IndexedDB copy);
+//   - a copy lives in IndexedDB (lib/mirror.ts, written after every successful save with its gen). restoreFromMirror
+//     uses it only when it is newer than the stored list (or nothing is stored): it merges its cards in like a backup
+//     (the larger count wins) and tells onCollectionRestored how many copies came back. An older copy fell behind a
+//     removal or a reset and is only brought up to date; one that can't be read is left alone until a later launch.
 //   What code can't change: iOS keeps separate storage for each Home Screen icon, Safari, each Private tab (erased when
 //   it closes) and each app's built-in browser. The app says where it is (lib/storageContext.ts, StorageNotice, Settings
 //   "Where My Cards is saved") and moves cards between them with backup codes / files (lib/backup.ts).

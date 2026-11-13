@@ -179,3 +179,31 @@
   gap: 10px;
   margin-top: 8px;
 }
+
+/* "Still not saved" after a retry in the sheet (a toast would be hidden behind the sheet). */
+.storage-notice-still {
+  margin: 0;
+  color: var(--text);
+  font-weight: 700;
+  text-align: center;
+}
+
+/* Focused only by the app (after a save worked): no ring for that, but keep the keyboard one. */
+.storage-notice:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ---------- Empty My Cards in the Home Screen app: cards collected in Safari or another app ---------- */
+
+.storage-bring {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.storage-bring-text {
+  margin: 0;
+  max-width: 36ch;
+  text-wrap: balance;
+}

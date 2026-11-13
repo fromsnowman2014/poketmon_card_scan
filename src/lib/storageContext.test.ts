@@ -362,4 +362,10 @@ describe('storageNotice', () => {
     expect(storageNotice(check({ kind: 'browser' }), false, true)).toBe('browser');
     expect(storageNotice(check({ probe: 'blocked' }), false, true)).toBe('cant-save');
   });
+
+  it('a save that worked after a failed startup check wins over that check', () => {
+    expect(storageNotice(check({ probe: 'full' }), true, false, true)).toBeNull();
+    expect(storageNotice(check({ kind: 'browser', probe: 'blocked' }), true, false, true)).toBe('browser');
+    expect(storageNotice(check({ probe: 'full' }), false, false, true)).toBe('unsaved'); // and failing again says so
+  });
 });

@@ -205,6 +205,14 @@ function* candidates(text: string): Generator<Candidate> {
   }
 }
 
+/**
+ * True when `text` holds a compressed code ("CC1z:") that this phone can't unpack (Safari before 16.4, e.g. an iPhone
+ * stuck on iOS 15): decodeBackup says null although the code may be fine. A backup file works on such a phone.
+ */
+export function needsNewerPhone(text: string): boolean {
+  return !canGzip() && /CC1z:/i.test(text);
+}
+
 async function unpack({ zipped, payload }: Candidate): Promise<string | null> {
   const bytes = fromBase64(payload);
   if (!bytes) return null;

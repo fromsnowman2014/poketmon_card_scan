@@ -6,6 +6,7 @@ import {
   decodeBackup,
   encodeBackupCode,
   MAX_BACKUP_CHARS,
+  needsNewerPhone,
 } from './backup';
 import type { CardDetail, CollectionItem } from './types';
 
@@ -201,8 +202,19 @@ describe('encodeBackupCode / decodeBackup', () => {
 
   it('cannot read a compressed code where the phone has no DecompressionStream (it says null, never throws)', async () => {
     const code = await encodeBackupCode(collection(2), NOW);
+    expect(needsNewerPhone(code)).toBe(false);
     vi.stubGlobal('DecompressionStream', undefined);
     expect(await decodeBackup(code)).toBeNull();
+    expect(needsNewerPhone(`backup: ${code.replace('CC1z:', 'cc1Z:')}`)).toBe(true); // so the screen can say why
+  });
+
+  it('a phone that cannot unpack still reads its own code and a plain one, and does not blame them', async () => {
+    vi.stubGlobal('CompressionStream', undefined);
+    vi.stubGlobal('DecompressionStream', undefined);
+    const code = await encodeBackupCode(collection(2), NOW);
+    expect(code.startsWith('CC1:')).toBe(true);
+    expect(needsNewerPhone(code)).toBe(false);
+    expect(needsNewerPhone('hello')).toBe(false);
   });
 
   it('never throws, whatever is pasted', async () => {

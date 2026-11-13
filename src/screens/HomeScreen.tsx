@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { CardImage } from '../components/CardImage';
 import { Icon } from '../components/Icon';
 import { SearchBar } from '../components/SearchBar';
-import { StorageNotice } from '../components/StorageNotice';
+import { BringCardsHint, StorageNotice } from '../components/StorageNotice';
 import { useStrings, type Strings } from '../lib/i18n';
 import { Link, navigate } from '../lib/router';
 import { useCollection, useHistory, useSettings } from '../lib/store';
@@ -113,6 +113,8 @@ export default function HomeScreen() {
             <HowItWorks />
             {/* A brand-new Safari tab or in-app browser: say where cards will be saved before the first one. */}
             <StorageNotice variant="compact" />
+            {/* A brand-new Home Screen app: cards collected in Safari or another app can be brought over. */}
+            <BringCardsHint />
           </>
         ) : (
           <>

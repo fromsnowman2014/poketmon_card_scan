@@ -1,6 +1,6 @@
 import { createElement } from 'react';
 import { renderToString } from 'react-dom/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CardDetail, CardVariant } from './types';
 
 /** Minimal Storage with an optional byte quota (UTF-16 chars × 2, like browsers count it). */
@@ -644,65 +644,208 @@ describe('collection: a saved card is never lost by the app', () => {
     expect(store.getCollectionSaveState().saved).toBe(true);
   });
 
+  describe('Safari quietly dropping a save (a full phone)', () => {
+    /**
+     * Like Safari: a write shows at once, and when its storage process can't write it (full), storage goes back to what
+     * it really holds a moment later. `disk` is that value.
+     */
+    class FullPhoneStorage extends MemoryStorage {
+      full = false;
+      disk: string | null = null;
+      setItem(k: string, v: string) {
+        super.setItem(k, v);
+        if (k !== 'cc:collection') return;
+        if (!this.full) this.disk = v;
+        else setTimeout(() => (this.disk === null ? super.removeItem(k) : super.setItem(k, this.disk)), 30);
+      }
+    }
+    let phone: FullPhoneStorage;
+    const onDisk = () => (phone.disk === null ? [] : (JSON.parse(phone.disk).data as Item[]));
+    const counts = (items: Item[]) => items.map((i) => `${i.localId}×${i.qty}`);
+    const settle = () => vi.advanceTimersByTime(3200); // read back, one more try, read back again
+
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      phone = new FullPhoneStorage();
+      await freshStore(phone);
+    });
+
+    it('reports the dropped save, and "try again" saves what the kid sees (not the old list)', () => {
+      add('SV8a-001');
+      settle();
+      phone.full = true;
+      add('SV8a-001'); // two copies now
+      settle();
+      expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'unknown' });
+      expect(counts(store.exportCollection())).toEqual(['001×2']); // still shown
+      expect(counts(onDisk())).toEqual(['001×1']);
+      phone.full = false;
+      expect(store.retryCollectionSave()).toBe(true);
+      settle();
+      expect(counts(onDisk())).toEqual(['001×2']);
+      expect(store.getCollectionSaveState().saved).toBe(true);
+    });
+
+    it('a dropped removal stays removed when the next change is saved', () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      settle();
+      phone.full = true;
+      store.removeFromCollection('ja:SV8a-002:normal');
+      settle();
+      phone.full = false;
+      add('SV8a-003');
+      settle();
+      expect(counts(onDisk())).toEqual(['003×1', '001×1']);
+      expect(store.getCollectionSaveState().saved).toBe(true);
+    });
+
+    it('a tap right after a dropped save builds on what the kid sees', () => {
+      add('SV8a-001');
+      settle();
+      phone.full = true;
+      add('SV8a-001'); // 2, dropped 30 ms later
+      vi.advanceTimersByTime(100);
+      phone.full = false;
+      add('SV8a-001'); // 3, before the read-back noticed
+      settle();
+      expect(counts(onDisk())).toEqual(['001×3']);
+      expect(store.getCollectionSaveState().saved).toBe(true);
+    });
+
+    describe('with the app going to the background and back, and other tabs', () => {
+      let doc: EventTarget & { visibilityState: string };
+      let win: EventTarget;
+      beforeEach(async () => {
+        doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+        win = new EventTarget();
+        vi.stubGlobal('document', doc);
+        vi.stubGlobal('window', win);
+        await freshStore(phone);
+      });
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      const hideAndShow = () => {
+        doc.visibilityState = 'hidden';
+        doc.dispatchEvent(new Event('visibilitychange'));
+        doc.visibilityState = 'visible';
+        doc.dispatchEvent(new Event('visibilitychange'));
+      };
+
+      for (const after of [10, 500, 1600]) {
+        it(`coming back ${after} ms after a dropped save still reports it`, () => {
+          add('SV8a-001');
+          settle();
+          phone.full = true;
+          add('SV8a-002');
+          vi.advanceTimersByTime(after);
+          hideAndShow();
+          settle();
+          expect(store.getCollectionSaveState().saved).toBe(false);
+          expect(keys(store.exportCollection())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+          phone.full = false;
+          expect(store.retryCollectionSave()).toBe(true);
+          settle();
+          expect(counts(onDisk())).toEqual(['002×1', '001×1']);
+        });
+      }
+
+      it('another tab saving during the read-back keeps (and saves) the card this page added', () => {
+        add('SV8a-001');
+        settle();
+        phone.full = true;
+        add('SV8a-002'); // dropped
+        vi.advanceTimersByTime(100);
+        phone.full = false;
+        // Another tab, which never saw 002, adds 003.
+        const other = JSON.parse(phone.disk!) as { v: number; data: Item[]; gen: number };
+        const added = { ...other.data[0], key: 'ja:SV8a-003:normal', id: 'SV8a-003', localId: '003', addedAt: new Date().toISOString() };
+        phone.setItem('cc:collection', JSON.stringify({ v: 1, data: [added, ...other.data], gen: other.gen + 1 }));
+        win.dispatchEvent(Object.assign(new Event('storage'), { key: 'cc:collection' }));
+        expect(keys(store.exportCollection())).toContain('ja:SV8a-002:normal'); // not dropped from the screen
+        settle();
+        expect(keys(onDisk()).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+        expect(store.getCollectionSaveState().saved).toBe(true);
+      });
+    });
+  });
+
   describe('the IndexedDB copy', () => {
     let copy: unknown;
+    /** The next this many reads fail (Safari: "Connection to Indexed Database server lost"). */
+    let readFails = 0;
+    let writeFails = false;
     let mirror: typeof import('./mirror');
     const backend = {
-      read: async () => copy,
+      read: async () => {
+        if (readFails > 0) {
+          readFails--;
+          throw new Error('Connection to Indexed Database server lost');
+        }
+        return copy;
+      },
       write: async (v: unknown) => {
+        if (writeFails) throw new Error('disk full');
         copy = v;
       },
     };
-    beforeEach(async () => {
-      copy = undefined;
+    const copied = () => (copy as { data: Item[] }).data;
+    /** A launch: the app reads My Cards, then checks the copy (as it does right after the first render). */
+    async function launch(): Promise<number> {
       mirror = await import('./mirror');
       mirror.setMirrorBackend(backend);
+      peek(store.useCollection);
+      return store.restoreFromMirror();
+    }
+    async function relaunch(): Promise<number> {
+      await reload();
+      return launch();
+    }
+    beforeEach(async () => {
+      copy = undefined;
+      readFails = 0;
+      writeFails = false;
+      await launch();
     });
 
-    it('puts back cards localStorage lost, and says how many', async () => {
+    it('puts back cards localStorage lost, and counts the copies', async () => {
+      add('SV8a-001');
       add('SV8a-001');
       add('SV8a-002');
       await mirror.flushMirror();
       ls.removeItem('cc:collection'); // localStorage lost My Cards while the app was closed
       await reload();
-      mirror = await import('./mirror');
-      mirror.setMirrorBackend(backend);
       const told = vi.fn();
       store.onCollectionRestored(told);
-      expect(await store.restoreFromMirror()).toBe(2);
-      expect(told).toHaveBeenCalledWith(2);
+      expect(await launch()).toBe(3); // 2 + 1, like the My Cards count
+      expect(told).toHaveBeenCalledWith(3);
       expect(keys(saved())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+      expect(saved().map((i) => i.qty)).toEqual([1, 2]);
       expect(keys(peek(store.useCollection))).toEqual(keys(saved()));
     });
 
-    it('brings back only what is missing, keeping newer changes', async () => {
+    it('an older copy brings nothing back: newer changes stay', async () => {
       add('SV8a-001');
       await mirror.flushMirror();
-      add('SV8a-001'); // two copies now, saved in localStorage
+      add('SV8a-001'); // two copies now, saved in localStorage only
       add('SV8a-002');
-      expect(await store.restoreFromMirror()).toBe(0);
+      expect(await relaunch()).toBe(0);
       expect(saved().find((i) => i.key === 'ja:SV8a-001:normal')?.qty).toBe(2);
     });
 
-    it('a removed card does not come back from the copy', async () => {
+    it('a removed card does not come back, even when the copy could not be updated', async () => {
       const key = add('SV8a-001');
       add('SV8a-002');
       await mirror.flushMirror();
-      store.removeFromCollection(key); // the copy is written right away for removals
-      await Promise.resolve();
-      await reload();
-      mirror = await import('./mirror');
-      mirror.setMirrorBackend(backend);
-      expect(await store.restoreFromMirror()).toBe(0);
-      expect(keys(saved())).toEqual(['ja:SV8a-002:normal']);
-    });
-
-    it('starts the copy for cards saved before it existed', async () => {
-      add('SV8a-001');
-      copy = undefined; // an app version without the copy saved this card
-      await store.restoreFromMirror();
+      writeFails = true;
+      store.removeFromCollection(key);
       await mirror.flushMirror();
-      expect((copy as { data: Item[] }).data.map((i) => i.key)).toEqual(['ja:SV8a-001:normal']);
+      writeFails = false;
+      expect(copied()).toHaveLength(2); // the copy still has the removed card
+      expect(await relaunch()).toBe(0);
+      expect(keys(saved())).toEqual(['ja:SV8a-002:normal']);
     });
 
     it('a reset empties the copy too', async () => {
@@ -710,11 +853,67 @@ describe('collection: a saved card is never lost by the app', () => {
       await mirror.flushMirror();
       store.resetAllData();
       await Promise.resolve();
-      await reload();
-      mirror = await import('./mirror');
-      mirror.setMirrorBackend(backend);
-      expect(await store.restoreFromMirror()).toBe(0);
+      expect(copied()).toEqual([]);
+      expect(await relaunch()).toBe(0);
       expect(saved()).toEqual([]);
+    });
+
+    it('a reset is not undone by a copy that could not be emptied', async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      writeFails = true;
+      store.resetAllData();
+      await Promise.resolve();
+      writeFails = false;
+      expect(copied()).toHaveLength(2);
+      expect(await relaunch()).toBe(0);
+      expect(saved()).toEqual([]);
+    });
+
+    it('a copy that could not be read is left alone, and brings the cards back at a later launch', async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      ls.removeItem('cc:collection'); // lost while the app was closed…
+      await reload();
+      readFails = 1; // …and the copy can't be read at this launch
+      expect(await launch()).toBe(0);
+      add('SV8a-003');
+      await mirror.flushMirror();
+      expect(keys(copied())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']); // not written over
+      expect(await relaunch()).toBe(2);
+      expect(keys(saved())).toEqual(['ja:SV8a-003:normal', 'ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+    });
+
+    it('brings back a save Safari dropped before the app could read it back', async () => {
+      const storage = new SilentStorage();
+      await freshStore(storage);
+      await launch();
+      add('SV8a-001');
+      storage.silent = true;
+      add('SV8a-002'); // localStorage quietly keeps the old list; the copy gets the new one
+      await mirror.flushMirror();
+      storage.silent = false;
+      expect(keys(saved())).toEqual(['ja:SV8a-001:normal']);
+      expect(await relaunch()).toBe(1);
+      expect(keys(saved()).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal']);
+    });
+
+    it('starts the copy for cards saved before it existed', async () => {
+      add('SV8a-001');
+      copy = undefined; // an app version without the copy saved this card
+      expect(await relaunch()).toBe(0);
+      await mirror.flushMirror();
+      expect(keys(copied())).toEqual(['ja:SV8a-001:normal']);
+    });
+
+    it('a copy from before the save counter still fills in a lost list', async () => {
+      add('SV8a-001');
+      await mirror.flushMirror();
+      copy = { v: 1, at: '2026-11-01T00:00:00.000Z', data: copied() }; // no `gen`
+      ls.removeItem('cc:collection');
+      expect(await relaunch()).toBe(1);
     });
   });
 });

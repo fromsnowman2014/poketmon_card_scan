@@ -134,7 +134,8 @@ All accept `className`. All built-in text is bilingual.
 | `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (follows the country: US dollars, Korea won; overridable), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `isApproxPrice(summary)` from pricing.ts — converted from euros, or an asking price — or `item.priceApprox`) adds a small "약 " in the Korean UI for any money (on the baseline) and a small "≈ " in the English UI — never both. `secondary` allows a small line underneath in the other money the kid knows (`secondaryCurrency(currency, country)`): dollars under won ("약 $0.04" / "$292.69"); under dollars, won only when the kid lives in Korea but switched to dollars ("약 398,500원"); none for a kid in the US who sees dollars (no ₩, and no `money-stack` gap). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
 | `SearchBar` | `onSubmit(q); value?; defaultValue?; onChange?; placeholder?; autoFocus?` | 58px pill with clear button; submits trimmed, non-empty text and closes the keyboard. Default placeholder "카드 이름이나 번호" |
 | `Sheet` | `open; onClose; title?; children` | Bottom sheet on native `<dialog>` (focus trap, inert page). Escape, backdrop tap and × call `onClose` |
-| `StorageNotice` | `variant: 'full' \| 'compact'; onCardPage?` | "Where cards are saved" (lib/storageContext). Shows the first that applies: cards not saved yet (amber, "Try saving again"), storage that failed the startup check (amber, the grown-up's fix), an app's built-in browser, a test address, an iPhone browser tab (calm info; "How to add to Home Screen" on iOS outside the app, "Move my cards" → `/settings?section=install\|backup`). Nothing in the Home Screen app when all is well. `full`: top of My Cards. `compact`: one 44px line (Home's My Cards panel; under the card page's Add button with `onCardPage`, which skips "not saved yet" because the button shows it) that opens a `Sheet` with the whole note. A warning-sign emoji or the info icon plus words, never color alone; `role="status"` only for "not saved yet" |
+| `StorageNotice` | `variant: 'full' \| 'compact'; onCardPage?` | "Where cards are saved" (lib/storageContext). Shows the first that applies: cards not saved yet (amber, "Try saving again"), storage that failed the startup check (amber, the grown-up's fix), an app's built-in browser, a test address, an iPhone browser tab (calm info; "How to add to Home Screen" on iOS outside the app, "Move my cards" → `/settings?section=install\|backup`). Nothing in the Home Screen app when all is well. `full`: top of My Cards. `compact`: one 44px line (Home's My Cards panel; under the card page's Add button with `onCardPage`, which skips "not saved yet" because the button shows it) that opens a `Sheet` with the whole note. A warning-sign emoji or the info icon plus words, never color alone; `role="status"` only for "not saved yet". "Try saving again" in the sheet answers a failure inside the sheet (a toast would sit behind it); after a save works, focus moves to the note, or to the screen heading when the note goes away, never to the page body. A failed startup check stops showing once a save has worked |
+| `BringCardsHint` | — | An empty My Cards in the iPhone/iPad Home Screen app only (empty state of My Cards, Home's first visit): "사파리나 다른 앱(카카오톡 등)에서 모은 카드가 있나요? 그 카드는 거기에 그대로 있어요." over a ghost "여기로 옮겨 오기" → `/settings?section=backup`. Nothing on Android or computers, where the installed app shares the browser's My Cards |
 | `EmptyState` | `emoji; title; text?; action?` | Centered message for empty / not found / offline / error. `action` is usually one `.btn-primary .btn-lg .btn-block` |
 | `Skeleton` | `shape?: 'line' \| 'card' \| 'circle'; width?; height?` | Pair with visible loading copy ("카드 읽는 중…") |
 | `Confetti` | `count?=36` | One CSS burst from the center of the nearest positioned parent (`position: relative`). Change its `key` to fire again. Hidden for reduced motion. Use for `rare` tier (용돈 카드: $5 / 5,000원 in the money shown) or better, after a scan |
@@ -192,7 +193,10 @@ opened by `/settings?section=backup` (the storage notice's "카드 옮기기 / M
   shows in a read-only, selected box labelled "길게 눌러 복사해요".
 - Paste (a `Sheet`): a 17px textarea with autocorrect off, "붙여넣기" when `navigator.clipboard.readText` exists, then
   "가져오기". A bad code is reported under the box (`role="status"`, ⚠️ + words, `--warn`); a toast would sit under the
-  sheet's backdrop.
+  sheet's backdrop. A compressed code ("CC1z:") on a phone that can't unpack it (Safari before 16.4) says so and points
+  to the file route instead of "not a backup code".
+- The intro names the Home Screen app and Safari on iPhone/iPad only; elsewhere it speaks of pages opened inside other
+  apps and of moving to another phone or computer.
 - Nothing is merged before the same sheet asks "카드 {n}장을 내 카드에 합칠까요?" over "이미 있는 카드는 그대로 둬요." and when the
   backup was made ("방금 만든 백업이에요." / "2일 전에 만든 백업이에요."): "네, 합칠게요" / "아니요". {n} counts copies (Σ qty),
   the number My Cards shows on the other side. Focus moves to the question.
@@ -200,7 +204,8 @@ opened by `/settings?section=backup` (the storage notice's "카드 옮기기 / M
   Screen app can't download); otherwise a download of `cardcheck-my-cards-YYYY-MM-DD.json`. Load from file: a hidden
   `<input type="file" accept=".json,application/json,text/plain">`, then the same question in a sheet titled "파일에서 불러오기".
 - After importing: "✨ 카드 {n}장을 가져왔어요!" (+ " {m}장은 합쳤어요"), "이미 있던 카드 {m}장을 합쳤어요" or "새로 가져올 카드가 없어요".
-  Nothing when the import couldn't be saved: App's "couldn't save" toast speaks.
+  When the import couldn't be saved: "⚠️ 카드를 넣었지만 아직 저장하지 못했어요. 어른에게 보여 주세요."
+- The by-hand copy box is scrolled to the middle of the screen when it opens (never behind the tab bar).
 
 ## Card screen: printings and the price panel
 
@@ -405,7 +410,13 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 | Before importing a backup | 카드 {n}장을 내 카드에 합칠까요? · 이미 있는 카드는 그대로 둬요. | Add {n} cards to My Cards? · Cards you already have stay as they are. |
 | Backup imported (toast) | 카드 {n}장을 가져왔어요! {m}장은 합쳤어요 · 새로 가져올 카드가 없어요 | Added {n} cards! Combined {m} you already had. · No new cards to add. |
 | Not a backup | 백업 코드가 아니에요. 다시 복사해 주세요. · 백업 파일이 아니에요. 다른 파일을 골라 주세요. | That’s not a backup code. Copy it again. · That’s not a backup file. Pick another one. |
-| Add button, not saved | ⚠️ 아직 저장 안 됐어요. 앱을 닫으면 사라져요. · 다시 저장하기 · 저장했어요! | ⚠️ Not saved yet. It will be gone when the app closes. · Try saving again · Saved! |
+| Code this phone can't open | 이 기기에서는 이런 백업 코드를 열 수 없어요. 다른 폰에서 '파일로 저장'을 누르고, 여기서 '파일에서 불러오기'를 눌러요. | This phone can’t open this kind of code. On the other phone, tap Save as file, then tap Load from file here. |
+| Import not saved (toast) | 카드를 넣었지만 아직 저장하지 못했어요. 어른에게 보여 주세요. | Added, but not saved yet. Show a grown‑up. |
+| Add button, not saved (this card) | ⚠️ 아직 저장 안 됐어요. 앱을 닫으면 사라져요. · 다시 저장하기 · 저장했어요! | ⚠️ Not saved yet. It will be gone when the app closes. · Try saving again · Saved! |
+| Add button, not saved (another card) | 이 카드는 저장돼 있어요. 아직 저장 안 된 다른 카드가 있어요. · not in My Cards: 아직 저장 안 된 카드가 있어요. | This card is saved. Some other cards aren’t saved yet. · not in My Cards: Some cards aren’t saved yet. |
+| Try saving again failed | ⚠️ 아직 저장하지 못했어요. 어른에게 보여 주세요. | ⚠️ Still not saved. Show a grown‑up. |
+| Couldn't save (toast) | 앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요. · blocked: 앗, 내 카드를 저장하지 못했어요. 이 폰은 저장이 막혀 있어요. 어른에게 보여 주세요. | Oops, My Cards couldn't be saved. Ask a grown‑up to check the phone's storage. · blocked: Oops, My Cards couldn't be saved: saving is blocked on this phone. Show a grown‑up. |
+| Empty My Cards in the Home Screen app | 사파리나 다른 앱(카카오톡 등)에서 모은 카드가 있나요? 그 카드는 거기에 그대로 있어요. · 여기로 옮겨 오기 | Collected cards in Safari or inside another app? They’re still there. · Bring them here |
 
 ## Motion & accessibility
 

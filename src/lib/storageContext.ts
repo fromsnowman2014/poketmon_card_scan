@@ -209,10 +209,16 @@ export type StorageNoticeKind = 'unsaved' | 'cant-save' | 'in-app' | 'test-addre
  * The first notice that applies: a change to My Cards not saved yet, storage that failed the startup check, an
  * in-app browser, a test address, an iPhone browser tab. Null in the Home Screen app (or on Android and computers)
  * when nothing is wrong. `skipUnsaved` on the card page, where the Add button already says "not saved yet".
+ * `savedThisSession`: a save of My Cards has worked since startup, so a failed startup check is out of date.
  */
-export function storageNotice(check: StorageCheck, saved: boolean, skipUnsaved = false): StorageNoticeKind | null {
+export function storageNotice(
+  check: StorageCheck,
+  saved: boolean,
+  skipUnsaved = false,
+  savedThisSession = false,
+): StorageNoticeKind | null {
   if (!saved && !skipUnsaved) return 'unsaved';
-  if (check.probe !== 'ok') return 'cant-save';
+  if (check.probe !== 'ok' && !savedThisSession) return 'cant-save';
   if (check.kind === 'in-app') return 'in-app';
   if (check.testAddress) return 'test-address';
   if (check.kind === 'browser') return 'browser';

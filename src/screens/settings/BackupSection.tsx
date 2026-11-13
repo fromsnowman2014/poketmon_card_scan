@@ -8,9 +8,11 @@ import {
   decodeBackup,
   encodeBackupCode,
   MAX_BACKUP_CHARS,
+  needsNewerPhone,
   type DecodedBackup,
 } from '../../lib/backup';
 import { fmtRelativeTime, useStrings, useUiLang, type Strings } from '../../lib/i18n';
+import { useStorageContext } from '../../lib/storageContext';
 import { exportCollection, importCollection, useCollection } from '../../lib/store';
 import type { CollectionItem } from '../../lib/types';
 import './BackupSection.css';
@@ -18,6 +20,7 @@ import './BackupSection.css';
 type Key =
   | 'title'
   | 'intro'
+  | 'introOther'
   | 'copy'
   | 'paste'
   | 'save'
@@ -43,7 +46,9 @@ type Key =
   | 'mergedOnly'
   | 'mergedOnly1'
   | 'nothingNew'
+  | 'addedNotSaved'
   | 'badCode'
+  | 'oldPhone'
   | 'badFile';
 
 const STRINGS: Strings<Key> = {
@@ -51,6 +56,8 @@ const STRINGS: Strings<Key> = {
     title: '내 카드 옮기기·백업',
     intro:
       "홈 화면 앱, 사파리, 다른 앱 안에서 연 화면은 내 카드를 따로 저장해요. 옮기려면 한쪽에서 '백업 코드 복사'를 누르고, 다른 쪽에서 '백업 코드 붙여넣기'를 눌러요. 앱 아이콘을 지우기 전에도 꼭 백업해요.",
+    introOther:
+      "다른 앱(카카오톡 등) 안에서 연 화면은 내 카드를 따로 저장해요. 옮기려면 한쪽에서 '백업 코드 복사'를 누르고, 다른 쪽에서 '백업 코드 붙여넣기'를 눌러요. 다른 폰이나 컴퓨터로 옮길 때도 똑같이 해요.",
     copy: '백업 코드 복사',
     paste: '백업 코드 붙여넣기',
     save: '파일로 저장',
@@ -76,13 +83,17 @@ const STRINGS: Strings<Key> = {
     mergedOnly: '이미 있던 카드 {m}장을 합쳤어요',
     mergedOnly1: '이미 있던 카드 1장을 합쳤어요',
     nothingNew: '새로 가져올 카드가 없어요',
+    addedNotSaved: '카드를 넣었지만 아직 저장하지 못했어요. 어른에게 보여 주세요.',
     badCode: '백업 코드가 아니에요. 다시 복사해 주세요.',
+    oldPhone: "이 기기에서는 이런 백업 코드를 열 수 없어요. 다른 폰에서 '파일로 저장'을 누르고, 여기서 '파일에서 불러오기'를 눌러요.",
     badFile: '백업 파일이 아니에요. 다른 파일을 골라 주세요.',
   },
   en: {
     title: 'Move or back up My Cards',
     intro:
       'The Home Screen app, Safari and pages opened inside other apps keep separate My Cards. To move them, tap Copy backup code in one, then Paste backup code in the other. Always back up before removing the app icon.',
+    introOther:
+      'Pages opened inside other apps (like Instagram or KakaoTalk) keep their own My Cards. To move them, tap Copy backup code in one, then Paste backup code in the other. The same works for moving to another phone or computer.',
     copy: 'Copy backup code',
     paste: 'Paste backup code',
     save: 'Save as file',
@@ -108,7 +119,9 @@ const STRINGS: Strings<Key> = {
     mergedOnly: 'Combined {m} cards you already had.',
     mergedOnly1: 'Combined 1 card you already had.',
     nothingNew: 'No new cards to add.',
+    addedNotSaved: 'Added, but not saved yet. Show a grown‑up.',
     badCode: 'That’s not a backup code. Copy it again.',
+    oldPhone: 'This phone can’t open this kind of code. On the other phone, tap Save as file, then tap Load from file here.',
     badFile: 'That’s not a backup file. Pick another one.',
   },
 };
@@ -242,7 +255,11 @@ function ManualCopy({ code, label }: { code: string; label: string }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const selectAll = () => ref.current?.setSelectionRange(0, ref.current.value.length);
   useEffect(() => {
-    ref.current?.focus();
+    const box = ref.current;
+    if (!box) return;
+    box.focus({ preventScroll: true });
+    // Centered: focus alone can leave it behind the tab bar on a short screen.
+    box.scrollIntoView({ block: 'center' });
     selectAll();
   }, [code]);
   return (
@@ -309,6 +326,7 @@ type Step =
  */
 export function BackupSection() {
   const t = useStrings(STRINGS);
+  const { ios } = useStorageContext();
   const items = useCollection();
   const prepared = usePreparedCode(items);
   const has = items.length > 0;
@@ -323,7 +341,7 @@ export function BackupSection() {
   const [manual, setManual] = useState<string | null>(null);
   const [step, setStep] = useState<Step | null>(null);
   const [draft, setDraft] = useState('');
-  const [problem, setProblem] = useState<'bad' | 'nothing' | null>(null);
+  const [problem, setProblem] = useState<'bad' | 'oldPhone' | 'nothing' | null>(null);
   const [busy, setBusy] = useState(false);
 
   const copy = () => {
@@ -366,7 +384,7 @@ export function BackupSection() {
     setBusy(false);
     const cards = backup ? backupCardCount(backup.items) : 0;
     if (!backup || !cards) {
-      setProblem(backup ? 'nothing' : 'bad');
+      setProblem(backup ? 'nothing' : needsNewerPhone(draft) ? 'oldPhone' : 'bad');
       return;
     }
     // Only if the sheet is still open on this step.
@@ -391,8 +409,11 @@ export function BackupSection() {
     const before = cardCount(exportCollection());
     const result = importCollection(step.backup.items);
     setStep(null);
-    // Not saved: App's "couldn't save" toast speaks, and the cards still show until the app is closed.
-    if (!result.saved) return;
+    if (!result.saved) {
+      // The cards show until the app is closed (and the screens say they aren't saved).
+      showToast(t('addedNotSaved'), { icon: '⚠️', durationMs: 5000 });
+      return;
+    }
     // Counted like My Cards counts (copies), so "12 cards" matches the number on the other side.
     const gained = Math.max(0, cardCount(exportCollection()) - before);
     const merged = result.updated;
@@ -410,7 +431,7 @@ export function BackupSection() {
         {t('title')}
       </h2>
       <div className="surface stack-16">
-        <p className="small muted settings-text">{t('intro')}</p>
+        <p className="small muted settings-text">{t(ios ? 'intro' : 'introOther')}</p>
         <div className="settings-backup-grid">
           <button
             type="button"
@@ -473,7 +494,7 @@ export function BackupSection() {
                 autoComplete="off"
                 spellCheck={false}
                 aria-describedby={problemId}
-                aria-invalid={problem === 'bad' || undefined}
+                aria-invalid={problem === 'bad' || problem === 'oldPhone' || undefined}
                 onChange={(e) => {
                   setDraft(e.target.value);
                   setProblem(null);
@@ -481,10 +502,10 @@ export function BackupSection() {
               />
               {/* Always there (empty until needed) so screen readers hear what appears in it. */}
               <p id={problemId} className="small settings-backup-problem" role="status">
-                {problem === 'bad' && (
+                {(problem === 'bad' || problem === 'oldPhone') && (
                   <>
                     <span aria-hidden="true">⚠️ </span>
-                    {t('badCode')}
+                    {t(problem === 'bad' ? 'badCode' : 'oldPhone')}
                   </>
                 )}
                 {problem === 'nothing' && t('nothingNew')}

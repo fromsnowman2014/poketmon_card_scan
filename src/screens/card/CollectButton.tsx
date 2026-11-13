@@ -1,10 +1,13 @@
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
+import { refocusAfterSave } from "../../components/StorageNotice";
 import { showToast } from "../../components/Toast";
 import { useStrings, type Strings } from "../../lib/i18n";
 import {
   addToCollection,
   collectionKey,
   getCollectionSaveState,
+  isCardSaved,
   retryCollectionSave,
   setCollectionThumb,
   setQuantity,
@@ -22,6 +25,9 @@ type Key =
   | "less"
   | "more"
   | "notSaved"
+  | "otherNotSaved"
+  | "someNotSaved"
+  | "stillUnsaved"
   | "saveAgain"
   | "savedNow";
 
@@ -35,6 +41,9 @@ const STRINGS: Strings<Key> = {
     less: "한 장 빼기",
     more: "한 장 더하기",
     notSaved: "아직 저장 안 됐어요. 앱을 닫으면 사라져요.",
+    otherNotSaved: "이 카드는 저장돼 있어요. 아직 저장 안 된 다른 카드가 있어요.",
+    someNotSaved: "아직 저장 안 된 카드가 있어요.",
+    stillUnsaved: "아직 저장하지 못했어요. 어른에게 보여 주세요.",
     saveAgain: "다시 저장하기",
     savedNow: "저장했어요!",
   },
@@ -47,6 +56,9 @@ const STRINGS: Strings<Key> = {
     less: "Remove one",
     more: "Add one more",
     notSaved: "Not saved yet. It will be gone when the app closes.",
+    otherNotSaved: "This card is saved. Some other cards aren’t saved yet.",
+    someNotSaved: "Some cards aren’t saved yet.",
+    stillUnsaved: "Still not saved. Show a grown‑up.",
     saveAgain: "Try saving again",
     savedNow: "Saved!",
   },
@@ -85,13 +97,22 @@ export interface CollectButtonProps {
 
 /**
  * "+ Add to My Cards", or "✓ In My Cards (2)" with a − / + stepper once added. When My Cards could not be saved
- * (storage blocked or full), it says so under the button, with a way to try again, instead of cheering.
+ * (storage blocked or full), it says so under the button, with a way to try again, instead of cheering: in amber when
+ * this card is the one not saved, quietly when it is saved and another change isn't.
  */
 export function CollectButton({ card, variantKey, photo }: CollectButtonProps) {
   const t = useStrings(STRINGS);
   const key = collectionKey(card, variantKey);
   const qty = useCollection().find((i) => i.key === key)?.qty ?? 0;
   const { saved } = useCollectionSaveState();
+  const [stillFailing, setStillFailing] = useState(false);
+  /** The Add button or the "In My Cards" label: focus goes there when the box with "try again" goes away. */
+  const anchor = useRef<HTMLElement | null>(null);
+  // Read only while something isn't saved (it reads storage).
+  const thisCardUnsaved = !saved && qty > 0 && !isCardSaved(key);
+  useEffect(() => {
+    if (saved) setStillFailing(false);
+  }, [saved]);
 
   const add = () => {
     addToCollection(card, variantKey);
@@ -105,14 +126,24 @@ export function CollectButton({ card, variantKey, photo }: CollectButtonProps) {
   };
 
   const saveAgain = () => {
-    if (retryCollectionSave()) showToast(t("savedNow"), { icon: "✅" });
+    if (retryCollectionSave()) {
+      setStillFailing(false);
+      showToast(t("savedNow"), { icon: "✅" });
+      refocusAfterSave(anchor.current);
+    } else {
+      // App's "couldn't save" toast speaks at most once a minute: answer this tap here.
+      setStillFailing(true);
+    }
   };
 
   const unsaved = !saved && (
-    <div className="card-unsaved" role="status">
+    <div
+      className={thisCardUnsaved ? "card-unsaved" : "card-unsaved card-unsaved-other"}
+      role="status"
+    >
       <p className="small card-unsaved-text">
-        <span aria-hidden="true">⚠️ </span>
-        {t("notSaved")}
+        {thisCardUnsaved && <span aria-hidden="true">⚠️ </span>}
+        {t(thisCardUnsaved ? "notSaved" : qty > 0 ? "otherNotSaved" : "someNotSaved")}
       </p>
       <button
         type="button"
@@ -121,6 +152,12 @@ export function CollectButton({ card, variantKey, photo }: CollectButtonProps) {
       >
         {t("saveAgain")}
       </button>
+      {stillFailing && (
+        <p className="small card-unsaved-still">
+          <span aria-hidden="true">⚠️ </span>
+          {t("stillUnsaved")}
+        </p>
+      )}
     </div>
   );
 
@@ -130,8 +167,11 @@ export function CollectButton({ card, variantKey, photo }: CollectButtonProps) {
   };
 
   if (qty === 0) {
-    return (
+    const button = (
       <button
+        ref={(el) => {
+          anchor.current = el;
+        }}
         type="button"
         className="btn btn-primary btn-lg btn-block"
         onClick={add}
@@ -140,16 +180,31 @@ export function CollectButton({ card, variantKey, photo }: CollectButtonProps) {
         {t("add")}
       </button>
     );
+    // Always in the same wrapper, so the button stays the same element (and keeps focus) when the line comes and goes.
+    return (
+      <div className="card-collect">
+        {button}
+        {unsaved}
+      </div>
+    );
   }
 
   return (
     <div className="card-collect">
       <div
         className={
-          saved ? "card-owned pop-in" : "card-owned card-owned-unsaved pop-in"
+          thisCardUnsaved
+            ? "card-owned card-owned-unsaved pop-in"
+            : "card-owned pop-in"
         }
       >
-        <span className="card-owned-label">
+        <span
+          className="card-owned-label"
+          ref={(el) => {
+            anchor.current = el;
+          }}
+          tabIndex={-1}
+        >
           <span className="card-owned-check" aria-hidden="true">
             <Icon name="check" size={18} strokeWidth={3} />
           </span>

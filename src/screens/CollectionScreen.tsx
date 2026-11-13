@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
-import { StorageNotice } from '../components/StorageNotice';
+import { BringCardsHint, StorageNotice } from '../components/StorageNotice';
 import { TopBar } from '../components/TopBar';
 import { useRates } from '../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
@@ -96,10 +96,14 @@ export default function CollectionScreen() {
             title={t('emptyTitle')}
             text={t('emptyText')}
             action={
-              <Link to="/scan" className="btn btn-primary btn-lg btn-block">
-                <Icon name="camera" />
-                {t('scan')}
-              </Link>
+              <>
+                <Link to="/scan" className="btn btn-primary btn-lg btn-block">
+                  <Icon name="camera" />
+                  {t('scan')}
+                </Link>
+                {/* The Home Screen app starts empty although cards collected in Safari are still there. */}
+                <BringCardsHint />
+              </>
             }
           />
         ) : (

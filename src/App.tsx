@@ -5,7 +5,7 @@ import { showToast, ToastHost } from './components/Toast';
 import { useStrings, type Strings } from './lib/i18n';
 import { useRoute, type Route } from './lib/router';
 import { useStorageContext } from './lib/storageContext';
-import { askPersistentStorage, onCollectionRestored, onCollectionSaveFailed, useSettings } from './lib/store';
+import { askPersistentStorage, getCollectionSaveState, onCollectionRestored, onCollectionSaveFailed, useSettings } from './lib/store';
 import type { CardLang, Settings } from './lib/types';
 import CardScreen from './screens/CardScreen';
 import CollectionScreen from './screens/CollectionScreen';
@@ -21,14 +21,16 @@ const THEME_COLORS = { dark: '#0A1020', light: '#F4F7FE' } as const;
 /** Storage that stays full or blocked fails on every change: say so at most once a minute. */
 const SAVE_FAILED_EVERY_MS = 60_000;
 
-const STRINGS: Strings<'saveFailed' | 'restored' | 'restored1'> = {
+const STRINGS: Strings<'saveFailed' | 'saveBlocked' | 'restored' | 'restored1'> = {
   ko: {
     saveFailed: '앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요.',
+    saveBlocked: '앗, 내 카드를 저장하지 못했어요. 이 폰은 저장이 막혀 있어요. 어른에게 보여 주세요.',
     restored: '저장해 둔 카드 {n}장을 다시 불러왔어요',
     restored1: '저장해 둔 카드 1장을 다시 불러왔어요',
   },
   en: {
     saveFailed: "Oops, My Cards couldn't be saved. Ask a grown\u2011up to check the phone's storage.",
+    saveBlocked: "Oops, My Cards couldn't be saved: saving is blocked on this phone. Show a grown\u2011up.",
     restored: 'Brought back {n} saved cards',
     restored1: 'Brought back 1 saved card',
   },
@@ -110,8 +112,10 @@ function useSaveFailedToast(): void {
         const now = Date.now();
         if (now - last.current < SAVE_FAILED_EVERY_MS) return;
         last.current = now;
+        // Blocked (e.g. Safari's "Block All Cookies"): free space wouldn't help, so don't send them looking for it.
+        const text = t(getCollectionSaveState().problem === 'blocked' ? 'saveBlocked' : 'saveFailed');
         // After the current handler: its own toast ("내 카드에 넣었어요!") must not replace this one.
-        setTimeout(() => showToast(t('saveFailed'), { icon: '⚠️', durationMs: 5000 }), 0);
+        setTimeout(() => showToast(text, { icon: '⚠️', durationMs: 5000 }), 0);
       }),
     [t],
   );

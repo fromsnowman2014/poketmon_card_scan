@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
 import { Link } from '../lib/router';
 import { inAppLabel, storageNotice, useStorageContext, type StorageCheck, type StorageNoticeKind } from '../lib/storageContext';
@@ -29,7 +29,9 @@ type Key =
   | 'browserText'
   | 'browserLine'
   | 'install'
-  | 'move';
+  | 'move'
+  | 'bringText'
+  | 'bringLink';
 
 const STRINGS: Strings<Key> = {
   ko: {
@@ -55,6 +57,8 @@ const STRINGS: Strings<Key> = {
     browserLine: '이 브라우저에만 저장돼요 · 홈 화면 앱과 따로예요',
     install: '홈 화면에 추가하는 법',
     move: '카드 옮기기',
+    bringText: '사파리나 다른 앱(카카오톡 등)에서 모은 카드가 있나요? 그 카드는 거기에 그대로 있어요.',
+    bringLink: '여기로 옮겨 오기',
   },
   en: {
     unsavedTitle: 'Some cards aren’t saved yet',
@@ -80,6 +84,8 @@ const STRINGS: Strings<Key> = {
     browserLine: 'Saved in this browser only · separate from the Home Screen app',
     install: 'How to add to Home Screen',
     move: 'Move my cards',
+    bringText: 'Collected cards in Safari or inside another app? They’re still there.',
+    bringLink: 'Bring them here',
   },
 };
 
@@ -140,18 +146,51 @@ function KindIcon({ kind, size }: { kind: StorageNoticeKind; size: number }) {
   );
 }
 
+/**
+ * "Try saving again" worked, so the notice changes or goes away, and the focused button with it: focus `target` if it
+ * is still there, else the screen's heading. Never the page body (a screen reader would start over).
+ */
+export function refocusAfterSave(target?: HTMLElement | null): void {
+  requestAnimationFrame(() => {
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    const next = target?.isConnected ? target : document.querySelector<HTMLElement>('main h1, main h2');
+    if (!next) return;
+    if (!next.hasAttribute('tabindex')) next.setAttribute('tabindex', '-1');
+    next.focus({ preventScroll: true });
+  });
+}
+
 /** The buttons under a notice: try saving again, or the way to the Home Screen app and to moving cards. */
-function Actions({ kind, check, inSheet, onDone }: { kind: StorageNoticeKind; check: StorageCheck; inSheet: boolean; onDone?: () => void }) {
+function Actions({
+  kind,
+  check,
+  inSheet,
+  onDone,
+  focusAfter,
+}: {
+  kind: StorageNoticeKind;
+  check: StorageCheck;
+  inSheet: boolean;
+  onDone?: () => void;
+  /** Where focus goes when a save worked (the notice itself, when it stays). */
+  focusAfter?: () => HTMLElement | null;
+}) {
   const t = useStrings(STRINGS);
+  // In the sheet a toast would sit behind it (a modal dialog is drawn above the page): say it in the sheet instead.
+  const [stillFailing, setStillFailing] = useState(false);
   const button = cx('btn', inSheet ? 'btn-block' : 'storage-notice-action');
 
   if (kind === 'unsaved') {
     const retry = () => {
       if (retryCollectionSave()) {
+        setStillFailing(false);
         showToast(t('savedNow'), { icon: '✅' });
         onDone?.();
+        refocusAfterSave(focusAfter?.());
+      } else if (inSheet) {
+        setStillFailing(true);
       } else {
-        // App's "couldn't save" toast speaks instead when it isn't holding back (once a minute).
         showToast(t('stillUnsaved'), { icon: '⚠️', durationMs: 5000 });
       }
     };
@@ -161,6 +200,17 @@ function Actions({ kind, check, inSheet, onDone }: { kind: StorageNoticeKind; ch
           <Icon name="refresh" size={18} />
           {t('saveAgain')}
         </button>
+        {/* Under the button, so nothing moves under the finger; always there, so screen readers hear it appear. */}
+        {inSheet && (
+          <p className="small storage-notice-still" role="status">
+            {stillFailing && (
+              <>
+                <span aria-hidden="true">⚠️ </span>
+                {t('stillUnsaved')}
+              </>
+            )}
+          </p>
+        )}
       </div>
     );
   }
@@ -186,8 +236,11 @@ function Actions({ kind, check, inSheet, onDone }: { kind: StorageNoticeKind; ch
 
 function FullNotice({ kind, check, className }: { kind: StorageNoticeKind; check: StorageCheck; className?: string }) {
   const copy = useCopy()(kind, check);
+  const box = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={box}
+      tabIndex={-1}
       className={cx('storage-notice', WARN.has(kind) && 'storage-notice-warn', className)}
       // Only "not saved yet" turns up while the screen is open; the others are there from the start.
       role={kind === 'unsaved' ? 'status' : undefined}
@@ -198,7 +251,7 @@ function FullNotice({ kind, check, className }: { kind: StorageNoticeKind; check
       </div>
       <p className="storage-notice-text">{copy.text}</p>
       {copy.fix && <p className="storage-notice-fix">{copy.fix}</p>}
-      <Actions kind={kind} check={check} inSheet={false} />
+      <Actions kind={kind} check={check} inSheet={false} focusAfter={() => box.current} />
     </div>
   );
 }
@@ -226,8 +279,9 @@ function CompactNotice({ kind, check, className }: { kind: StorageNoticeKind | n
         <Icon name="chevron-right" size={18} className="storage-notice-chevron" />
       </button>
     );
-    // Only "not saved yet" turns up while the screen is open.
-    line = kind === 'unsaved' ? <div role="status">{button}</div> : button;
+    // Only "not saved yet" turns up while the screen is open. Always in the same wrapper, so the button stays the same
+    // element when the line changes (saved again) and the closing sheet can give focus back to it.
+    line = <div role={kind === 'unsaved' ? 'status' : undefined}>{button}</div>;
   }
 
   return (
@@ -274,8 +328,28 @@ export interface StorageNoticeProps {
  */
 export function StorageNotice({ variant, onCardPage = false, className }: StorageNoticeProps) {
   const check = useStorageContext();
-  const { saved } = useCollectionSaveState();
-  const kind = storageNotice(check, saved, onCardPage);
+  const { saved, lastSavedAt } = useCollectionSaveState();
+  const kind = storageNotice(check, saved, onCardPage, !!lastSavedAt);
   if (variant === 'compact') return <CompactNotice kind={kind} check={check} className={className} />;
   return kind ? <FullNotice kind={kind} check={check} className={className} /> : null;
+}
+
+/**
+ * An empty My Cards in the iPhone/iPad Home Screen app. Cards collected in Safari or inside another app are still
+ * there, in that storage area: say so, with the way to bring them over (Settings › Move or back up). Nothing anywhere
+ * else: on Android and computers the installed app shares the browser's My Cards.
+ */
+export function BringCardsHint() {
+  const t = useStrings(STRINGS);
+  const { ios, kind } = useStorageContext();
+  if (!ios || kind !== 'app') return null;
+  return (
+    <div className="storage-bring">
+      <p className="small muted storage-bring-text">{t('bringText')}</p>
+      <Link to="/settings?section=backup" className="btn btn-ghost storage-bring-link">
+        <Icon name="cards" size={18} />
+        {t('bringLink')}
+      </Link>
+    </div>
+  );
 }

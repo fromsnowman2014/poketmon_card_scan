@@ -10,6 +10,8 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   background: var(--bg);
+  /* Focus and scrollIntoView keep things above the fixed tab bar. */
+  scroll-padding-bottom: var(--screen-bottom);
 }
 
 html:has(dialog[open]) {
