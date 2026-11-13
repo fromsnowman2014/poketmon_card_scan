@@ -4,7 +4,8 @@ import { TabBar } from './components/TabBar';
 import { showToast, ToastHost } from './components/Toast';
 import { useStrings, type Strings } from './lib/i18n';
 import { useRoute, type Route } from './lib/router';
-import { onCollectionSaveFailed, useSettings } from './lib/store';
+import { useStorageContext } from './lib/storageContext';
+import { askPersistentStorage, onCollectionRestored, onCollectionSaveFailed, useSettings } from './lib/store';
 import type { CardLang, Settings } from './lib/types';
 import CardScreen from './screens/CardScreen';
 import CollectionScreen from './screens/CollectionScreen';
@@ -20,9 +21,17 @@ const THEME_COLORS = { dark: '#0A1020', light: '#F4F7FE' } as const;
 /** Storage that stays full or blocked fails on every change: say so at most once a minute. */
 const SAVE_FAILED_EVERY_MS = 60_000;
 
-const STRINGS: Strings<'saveFailed'> = {
-  ko: { saveFailed: '앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요.' },
-  en: { saveFailed: "Oops, My Cards couldn't be saved. Ask a grown\u2011up to check the phone's storage." },
+const STRINGS: Strings<'saveFailed' | 'restored' | 'restored1'> = {
+  ko: {
+    saveFailed: '앗, 내 카드를 저장하지 못했어요. 어른에게 폰 저장 공간을 봐 달라고 해요.',
+    restored: '저장해 둔 카드 {n}장을 다시 불러왔어요',
+    restored1: '저장해 둔 카드 1장을 다시 불러왔어요',
+  },
+  en: {
+    saveFailed: "Oops, My Cards couldn't be saved. Ask a grown\u2011up to check the phone's storage.",
+    restored: 'Brought back {n} saved cards',
+    restored1: 'Brought back 1 saved card',
+  },
 };
 const CARD_LANGS: readonly string[] = ['en', 'ja', 'ko'] satisfies CardLang[];
 
@@ -108,11 +117,34 @@ function useSaveFailedToast(): void {
   );
 }
 
+/** A toast when cards the main storage lost were put back from the second copy (store.restoreFromMirror). */
+function useRestoredToast(): void {
+  const t = useStrings(STRINGS);
+  useEffect(
+    () => onCollectionRestored((n) => showToast(n === 1 ? t('restored1') : t('restored', { n }), { icon: '✅', durationMs: 4000 })),
+    [t],
+  );
+}
+
+/**
+ * Startup: where the app runs and whether storage takes a save are worked out once, on the first render
+ * (storageContext; StorageNotice and Settings read the same answer). The Home Screen app also asks the browser to
+ * keep My Cards when space runs low (Safari grants it to Home Screen apps).
+ */
+function useStorageStartup(): void {
+  const { kind } = useStorageContext();
+  useEffect(() => {
+    if (kind === 'app') askPersistentStorage();
+  }, [kind]);
+}
+
 export default function App() {
   const route = useRoute();
   useDocumentSettings(useSettings());
   useScrolledFlag();
+  useStorageStartup();
   useSaveFailedToast();
+  useRestoredToast();
 
   useEffect(() => {
     // Fetch the scan screen in the background so the camera opens instantly on first tap.

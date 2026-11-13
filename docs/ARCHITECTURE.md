@@ -73,8 +73,8 @@ navigation uses `history.pushState(state, '')` **without changing the URL**; the
 | `/scan` | Camera viewfinder or a photo → OCR → the card (when sure) or "Is this your card?" candidates → typed number |
 | `/search?q=<text>&lang=<en|ja|ko>` | Name / number search results grid |
 | `/card/<lang>/<id>` | Result screen (layout below): art, name, chips, printing tiles, price panel (시세 + low/high), add to My Cards, eBay, More prices. `?v=<variantKey>` opens on that printing (links from My Cards, Best card and Recent carry it; an unknown key falls back). `?from=scan` (set by the Scan screen) fires confetti for 용돈 카드 or more ($5 / 5,000원, in the money shown) and may show the "shiny card?" toast |
-| `/collection` | My Cards: total value, since last week, best card, cards by price, grid (edit mode), refresh prices |
-| `/settings` | Where you live (🇺🇸 / 🇰🇷: sets the money and search language), UI language, money (follows the country; a grown-up can override it), theme, default search language, optional eBay worker URL (label exactly "eBay 워커 주소" / "eBay worker URL": worker/README.md points parents to it), install guide, reset, data credits |
+| `/collection` | My Cards: the "where cards are saved" notice when it applies (StorageNotice), total value, since last week, best card, cards by price, grid (edit mode), refresh prices |
+| `/settings` | Where you live (🇺🇸 / 🇰🇷: sets the money and search language), UI language, money (follows the country; a grown-up can override it), theme, default search language, optional eBay worker URL (label exactly "eBay 워커 주소" / "eBay worker URL": worker/README.md points parents to it), install guide, where My Cards is saved (place, address, cards, storage protection, last save, save status), move or back up My Cards (backup code / file), reset, data credits. `?section=install|storage|backup` opens it at that section |
 
 ### Card screen layout
 Top to bottom. The kid picks the printing first, then reads its price; both are in the first view on every phone.
@@ -567,6 +567,35 @@ export function interpolate(template: string, vars?: Record<string, string | num
 export function fmtRelativeTime(iso: string, lang: UiLang, now?: number): string;   // "방금", "2시간 전" / "just now", "2h ago"
 // Each screen/component defines its OWN Strings object locally (no shared dictionary file to avoid edit conflicts).
 ```
+
+### lib/storageContext.ts (where My Cards is saved)
+- `detectStorageContext(env)` → `{ kind: 'app'|'browser'|'in-app'|'desktop', ios, inAppName?, testAddress, host }`: standalone → app; a built-in browser token (KAKAOTALK, NAVER(inapp, Instagram, FBAN/FBAV/FB_IAB/FBIOS, Line/, DaumApps, everytimeApp, GSA/, Twitter) → in-app with its name; an iOS WebKit UA without "Safari/" → in-app; other iOS (iPadOS: "Macintosh" + touch) → browser (Safari, Chrome/Firefox on iOS, an app's Safari view); else desktop. `isStandalone()`, `isTestAddress(host)` (*.trycloudflare.com, *.pages.dev, localhost/*.localhost/*.local, 127/8, [::1], 10/8, 172.16/12, 192.168/16), `inAppLabel(ctx, lang)`.
+- `probeStorage()` → 'ok'|'blocked'|'full': writes/reads/removes `cc:probe` through cache.writeWithRoom; never throws.
+- `getStorageContext()` / `useStorageContext()`: the context + the startup probe, once per session (App runs it on the first render and calls `askPersistentStorage()` in the Home Screen app). `storageNotice(check, saved, skipUnsaved)` picks StorageNotice's case.
+
+### lib/backup.ts — moving My Cards between storage areas
+```ts
+export async function encodeBackupCode(items: readonly CollectionItem[], now?: Date): Promise<string>;
+//   "CC1z:" + base64url(gzip(JSON)) where CompressionStream exists, else "CC1:" + base64url(JSON). The JSON is
+//   BackupEnvelope { app: 'cardcheck', kind: 'my-cards', v: 1, exportedAt, items }. Photos are never included
+//   ("cc:thumbs" stays behind; a data: image / imageFallback is dropped).
+export function backupFile(items: readonly CollectionItem[], now?: Date): { name: string; text: string };
+//   "cardcheck-my-cards-YYYY-MM-DD.json" (local date), the envelope indented.
+export async function decodeBackup(text: string): Promise<{ items: unknown[]; exportedAt?: string } | null>;
+//   Either code form (spaces, line breaks and zero-width spaces anywhere; text around it, e.g. "CardCheck backup: CC1z:…",
+//   up to 5 words after it) or a backup file's content (BOM, CRLF ok). Null for another app / kind / version, a broken or
+//   cut-off code, no items array, more than 5,000,000 chars, or a code that unpacks past 10 MB. Never throws. A CC1z code
+//   can't be read where DecompressionStream is missing (Safari < 16.4): null.
+export function backupCardCount(items: readonly unknown[]): number;   // copies (Σ qty) of valid entries, one per key, ≤ 999 each
+// Merging is store.importCollection (by key, never removes). UI: screens/settings/BackupSection.tsx.
+```
+
+### lib/mirror.ts (IndexedDB copy of My Cards)
+- `saveMirror(data)` copies the stored My Cards array after every successful save (debounced 500 ms; store.ts flushes at
+  once for removals and resets, and on pagehide / when the page is hidden); `readMirror()` returns it or null (no
+  IndexedDB, an error, or no answer within 3 s). DB "cardcheck", store "kv", key "collection", record
+  `{ v: 1, at, data }`. `setMirrorBackend()` swaps in a stand-in for tests. Restore-only: localStorage stays the main
+  copy (store.restoreFromMirror). It can't help across storage areas: IndexedDB lives in the same one.
 
 ### lib/store.ts (useSyncExternalStore-based, persisted to localStorage)
 ```ts

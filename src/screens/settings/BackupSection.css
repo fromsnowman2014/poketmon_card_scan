@@ -1,0 +1,65 @@
+/* Settings › Move or back up My Cards (settings/BackupSection.tsx). */
+
+/* Two by two: copy · paste the backup code, then save · load a file. */
+.settings-backup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* A tile: the glyph over a label that may take two lines ("백업 코드 붙여넣기" is wider than half a phone). */
+.settings-backup-btn {
+  flex-direction: column;
+  gap: 6px;
+  min-height: 84px;
+  padding: 12px 10px;
+  border-radius: var(--radius);
+  white-space: normal;
+  text-align: center;
+  line-height: 1.25;
+}
+
+.settings-backup-glyph {
+  color: var(--primary-text);
+}
+
+.settings-backup-none,
+.settings-backup-hold {
+  padding-inline: 2px;
+}
+
+.settings-backup-hold {
+  font-weight: 700;
+}
+
+/* A backup code is one long word: it wraps anywhere. The 17px of .input keeps iOS from zooming in. */
+.settings-backup-code {
+  display: block;
+  height: 120px;
+  min-height: 0;
+  resize: none;
+  line-height: 1.4;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.settings-backup-code[readonly] {
+  background: var(--surface-2);
+}
+
+/* Takes no room while empty, so the line under the box only opens when there is something to say. */
+.settings-backup-problem:not(:empty) {
+  margin-top: 8px;
+  padding-inline: 2px;
+  font-weight: 700;
+  color: var(--warn);
+}
+
+.settings-backup-question {
+  font-weight: 800;
+}
+
+/* Focused only so screen readers start reading here; it isn't something to press. */
+.settings-backup-question:focus {
+  outline: none;
+}

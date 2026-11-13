@@ -3,6 +3,7 @@ import { CardImage } from '../../components/CardImage';
 import { cx } from '../../components/cx';
 import { Icon } from '../../components/Icon';
 import { Money } from '../../components/Money';
+import { StorageNotice } from '../../components/StorageNotice';
 import { useStrings, type Strings } from '../../lib/i18n';
 import { Link } from '../../lib/router';
 import { collectionTotalUsd, recordSnapshot, useCollectionThumbs, useSnapshots } from '../../lib/store';
@@ -68,8 +69,20 @@ function ChangeLine({ change }: { change: WeekChange }) {
   );
 }
 
-/** Total value of My Cards with the change since last week; a friendly nudge when nothing is saved yet. */
+/**
+ * Total value of My Cards with the change since last week; a friendly nudge when nothing is saved yet. Under it, one
+ * line says where the cards are saved when that matters (StorageNotice; a button can't sit inside the panel's link).
+ */
 export function MyCardsPanel({ items }: { items: CollectionItem[] }) {
+  return (
+    <div className="stack-8">
+      <Panel items={items} />
+      <StorageNotice variant="compact" />
+    </div>
+  );
+}
+
+function Panel({ items }: { items: CollectionItem[] }) {
   const t = useStrings(STRINGS);
   const snapshots = useSnapshots();
   const thumbs = useCollectionThumbs();

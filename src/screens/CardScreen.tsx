@@ -5,6 +5,7 @@ import { cx } from '../components/cx';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { Sheet } from '../components/Sheet';
+import { StorageNotice } from '../components/StorageNotice';
 import { useValueTier } from '../components/TierBadge';
 import { showToast } from '../components/Toast';
 import { TopBar } from '../components/TopBar';
@@ -327,6 +328,8 @@ function CardResult({ card: fetched, lang, photo, fromScan, wanted }: CardResult
       )}
 
       <CollectButton card={card} variantKey={variant.key} photo={photo} />
+      {/* Where the card goes when that matters ("Saved in this browser only…"); "not saved yet" is the button's own. */}
+      <StorageNotice variant="compact" onCardPage />
 
       <EbayPanel query={query} />
 

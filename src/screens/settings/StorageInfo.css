@@ -1,0 +1,38 @@
+/* Settings › Where My Cards is saved (StorageInfo.tsx) */
+
+.storage-info-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.storage-info-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-small);
+  line-height: 1.4;
+}
+
+.storage-info-row:first-child {
+  padding-top: 2px;
+  border-top: 0;
+}
+
+.storage-info-row:last-child {
+  padding-bottom: 0;
+}
+
+.storage-info-row dt {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.storage-info-row dd {
+  margin: 0;
+  font-weight: 700;
+  /* A long address ("warm-cards-live.trycloudflare.com") breaks rather than widening the page. */
+  overflow-wrap: anywhere;
+}

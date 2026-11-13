@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
+import { StorageNotice } from '../components/StorageNotice';
 import { TopBar } from '../components/TopBar';
 import { useRates } from '../lib/fx';
 import { useStrings, useUiLang, type Strings } from '../lib/i18n';
@@ -87,6 +88,8 @@ export default function CollectionScreen() {
     <main className="screen collection">
       <TopBar title={t('title')} right={editButton} />
       <div className="screen-pad stack-24">
+        {/* Where these cards are saved, when that matters (a Safari tab, another app, a test address, not saved). */}
+        <StorageNotice variant="full" className="collection-storage" />
         {items.length === 0 ? (
           <EmptyState
             emoji="📸"

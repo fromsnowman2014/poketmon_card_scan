@@ -425,3 +425,9 @@ a.collection-card:active .collection-art {
   text-align: center;
   text-wrap: balance;
 }
+
+/* Under the "where cards are saved" note (StorageNotice), the empty state starts higher, so its Scan button still
+   ends above the tab bar's raised Scan button on a 375×667 phone. */
+.collection-storage + .empty-state {
+  padding-top: 4px;
+}

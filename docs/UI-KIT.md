@@ -134,6 +134,7 @@ All accept `className`. All built-in text is bilingual.
 | `Money` | `usd; approx?; secondary?; animate?` | Formats with `settings.currency` (follows the country: US dollars, Korea won; overridable), the UI language and live rates. Korean UI + won is written the Korean way: "4,760원", "123,400원", "198만 원", "1억 2,000만 원"; otherwise "₩4,760" / "$3.50". `approx` (pass `isApproxPrice(summary)` from pricing.ts — converted from euros, or an asking price — or `item.priceApprox`) adds a small "약 " in the Korean UI for any money (on the baseline) and a small "≈ " in the English UI — never both. `secondary` allows a small line underneath in the other money the kid knows (`secondaryCurrency(currency, country)`): dollars under won ("약 $0.04" / "$292.69"); under dollars, won only when the kid lives in Korea but switched to dollars ("약 398,500원"); none for a kid in the US who sees dollars (no ₩, and no `money-stack` gap). `animate` counts up over 600ms (skipped for reduced motion). Size it with a class: `<Money usd={p} approx secondary animate className="price-xl" />`. Sets `--money-chars` (width of the final amount, see below). Anywhere else that prints money (e.g. a shipping note) calls `formatMoney(usd, currency, rates, { lang })` so it matches |
 | `SearchBar` | `onSubmit(q); value?; defaultValue?; onChange?; placeholder?; autoFocus?` | 58px pill with clear button; submits trimmed, non-empty text and closes the keyboard. Default placeholder "카드 이름이나 번호" |
 | `Sheet` | `open; onClose; title?; children` | Bottom sheet on native `<dialog>` (focus trap, inert page). Escape, backdrop tap and × call `onClose` |
+| `StorageNotice` | `variant: 'full' \| 'compact'; onCardPage?` | "Where cards are saved" (lib/storageContext). Shows the first that applies: cards not saved yet (amber, "Try saving again"), storage that failed the startup check (amber, the grown-up's fix), an app's built-in browser, a test address, an iPhone browser tab (calm info; "How to add to Home Screen" on iOS outside the app, "Move my cards" → `/settings?section=install\|backup`). Nothing in the Home Screen app when all is well. `full`: top of My Cards. `compact`: one 44px line (Home's My Cards panel; under the card page's Add button with `onCardPage`, which skips "not saved yet" because the button shows it) that opens a `Sheet` with the whole note. A warning-sign emoji or the info icon plus words, never color alone; `role="status"` only for "not saved yet" |
 | `EmptyState` | `emoji; title; text?; action?` | Centered message for empty / not found / offline / error. `action` is usually one `.btn-primary .btn-lg .btn-block` |
 | `Skeleton` | `shape?: 'line' \| 'card' \| 'circle'; width?; height?` | Pair with visible loading copy ("카드 읽는 중…") |
 | `Confetti` | `count?=36` | One CSS burst from the center of the nearest positioned parent (`position: relative`). Change its `key` to fire again. Hidden for reduced motion. Use for `rare` tier (용돈 카드: $5 / 5,000원 in the money shown) or better, after a scan |
@@ -177,6 +178,29 @@ The money follows where the kid lives (ARCHITECTURE.md › Country and money).
   USA"). It shows only when `needsCountryPrompt()` (no confident guess from the phone) and at most once per app load.
   A pick always sets that country's money (the button names it; the search language follows only a real country
   change); ×, backdrop and Escape keep the guess. Afterwards focus goes to Home's heading (`onClosed`; nothing on the page opened the sheet).
+
+## Settings › Move or back up My Cards (`screens/settings/BackupSection.tsx` + `.css`)
+
+iOS keeps a separate My Cards for each Home Screen icon, Safari, each Private tab and each app's built-in browser; a
+backup code or file moves cards between them and keeps them when the icon is removed. `<section id="settings-backup">`,
+opened by `/settings?section=backup` (the storage notice's "카드 옮기기 / Move my cards").
+- Four tiles in a 2×2 grid (`.settings-backup-btn`: an icon over a label that may take two lines, at least 84px tall):
+  Copy backup code · Paste backup code / Save as file · Load from file. With no cards, copy and save are disabled and
+  "아직 카드가 없어요" under the grid describes them (`aria-describedby`).
+- Copy: the code is made as soon as My Cards changes, so the tap writes it to the clipboard right away (Safari allows
+  that only inside the tap). Toast "📋 백업 코드를 복사했어요. 다른 쪽에서 붙여넣어요." When the clipboard says no, the code
+  shows in a read-only, selected box labelled "길게 눌러 복사해요".
+- Paste (a `Sheet`): a 17px textarea with autocorrect off, "붙여넣기" when `navigator.clipboard.readText` exists, then
+  "가져오기". A bad code is reported under the box (`role="status"`, ⚠️ + words, `--warn`); a toast would sit under the
+  sheet's backdrop.
+- Nothing is merged before the same sheet asks "카드 {n}장을 내 카드에 합칠까요?" over "이미 있는 카드는 그대로 둬요." and when the
+  backup was made ("방금 만든 백업이에요." / "2일 전에 만든 백업이에요."): "네, 합칠게요" / "아니요". {n} counts copies (Σ qty),
+  the number My Cards shows on the other side. Focus moves to the question.
+- Save as file: on a phone or tablet, the share sheet when `navigator.canShare({ files })` (iPhone: Save to Files; a Home
+  Screen app can't download); otherwise a download of `cardcheck-my-cards-YYYY-MM-DD.json`. Load from file: a hidden
+  `<input type="file" accept=".json,application/json,text/plain">`, then the same question in a sheet titled "파일에서 불러오기".
+- After importing: "✨ 카드 {n}장을 가져왔어요!" (+ " {m}장은 합쳤어요"), "이미 있던 카드 {m}장을 합쳤어요" or "새로 가져올 카드가 없어요".
+  Nothing when the import couldn't be saved: App's "couldn't save" toast speaks.
 
 ## Card screen: printings and the price panel
 
@@ -368,6 +392,20 @@ Short sentences, talk to the kid ("you"), one emoji at most, no finance words: "
 | OCR still downloading | 번호 읽기 도구를 아직 받고 있어요 · 조금 뒤에 다시 찍어 봐요 | The number reader is still loading · Try scanning again in a minute |
 | Approximate price | 약 4,760원 / 약 $3.50 (Korean UI, any money) | ≈ $3.50 / ≈ ₩4,760 |
 | Shipping | 배송비 1,700원 포함 · 무료 배송 · 배송비 별도 | incl. ₩1,700 shipping · Free shipping · + shipping |
+| Not the Home Screen app (iPhone browser tab) | 여기는 홈 화면 앱이 아니에요 · line: 이 브라우저에만 저장돼요 · 홈 화면 앱과 따로예요 | This isn’t the Home Screen app · line: Saved in this browser only · separate from the Home Screen app |
+| Inside another app | 다른 앱 안에서 열렸어요 | Opened inside another app |
+| Test address | 테스트용 주소예요 | This is a test address |
+| Storage refuses to save | 이 폰은 지금 카드를 저장할 수 없어요 | This phone can’t save cards right now |
+| Not saved yet (notice) | 아직 저장 안 된 카드가 있어요 · 다시 저장하기 | Some cards aren’t saved yet · Try saving again |
+| Cards put back from the second copy (toast) | 저장해 둔 카드 {n}장을 다시 불러왔어요 | Brought back {n} saved cards |
+| Settings section | 내 카드 저장 위치 | Where My Cards is saved |
+| Backup heading · buttons | 내 카드 옮기기·백업 · 백업 코드 복사 · 백업 코드 붙여넣기 · 파일로 저장 · 파일에서 불러오기 | Move or back up My Cards · Copy backup code · Paste backup code · Save as file · Load from file |
+| Backup code copied (toast) | 백업 코드를 복사했어요. 다른 쪽에서 붙여넣어요. | Backup code copied. Paste it on the other side. |
+| Clipboard said no | 길게 눌러 복사해요 | Press and hold to copy |
+| Before importing a backup | 카드 {n}장을 내 카드에 합칠까요? · 이미 있는 카드는 그대로 둬요. | Add {n} cards to My Cards? · Cards you already have stay as they are. |
+| Backup imported (toast) | 카드 {n}장을 가져왔어요! {m}장은 합쳤어요 · 새로 가져올 카드가 없어요 | Added {n} cards! Combined {m} you already had. · No new cards to add. |
+| Not a backup | 백업 코드가 아니에요. 다시 복사해 주세요. · 백업 파일이 아니에요. 다른 파일을 골라 주세요. | That’s not a backup code. Copy it again. · That’s not a backup file. Pick another one. |
+| Add button, not saved | ⚠️ 아직 저장 안 됐어요. 앱을 닫으면 사라져요. · 다시 저장하기 · 저장했어요! | ⚠️ Not saved yet. It will be gone when the app closes. · Try saving again · Saved! |
 
 ## Motion & accessibility
 

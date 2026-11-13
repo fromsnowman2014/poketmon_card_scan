@@ -8,10 +8,12 @@ import { useRoute } from '../lib/router';
 import { updateSettings, useSettings } from '../lib/store';
 import type { Settings } from '../lib/types';
 import { EbayWorker } from './settings/EbayWorker';
+import { BackupSection } from './settings/BackupSection';
 import { InstallGuide } from './settings/InstallGuide';
 import { countryOptions, currencyOptions, moneyOverridden } from './settings/regionOptions';
 import { ResetData } from './settings/ResetData';
 import { Segmented, type SegmentOption } from './settings/Segmented';
+import { StorageInfo } from './settings/StorageInfo';
 import './SettingsScreen.css';
 
 type Key =
@@ -124,7 +126,11 @@ function Field<T extends string>({ id, label, note, value, options, onChange }: 
 }
 
 /** `/settings?section=<name>` opens the screen at that section (links from the "where cards are saved" notice). */
-const SECTION_IDS: Partial<Record<string, string>> = { backup: 'settings-backup', install: 'settings-install' };
+const SECTION_IDS: Partial<Record<string, string>> = {
+  backup: 'settings-backup',
+  install: 'settings-install',
+  storage: 'settings-storage',
+};
 
 function useScrollToSection(section: string | null): void {
   useEffect(() => {
@@ -216,6 +222,8 @@ export default function SettingsScreen() {
 
         <EbayWorker key={resets} />
         <InstallGuide />
+        <StorageInfo />
+        <BackupSection />
 
         <section className="settings-section" aria-labelledby="settings-credits">
           <h2 id="settings-credits" className="settings-heading">
