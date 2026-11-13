@@ -238,3 +238,18 @@
 .settings-version {
   text-align: center;
 }
+
+/* Sections a link opens directly (/settings?section=backup): their heading lands below the top bar. */
+.settings-section[id] {
+  scroll-margin-top: calc(var(--topbar-h) + var(--safe-top) + 12px);
+}
+
+.settings-section[id] h2:focus {
+  outline: none;
+}
+
+.settings-section[id] h2:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}

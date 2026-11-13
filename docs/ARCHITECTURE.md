@@ -38,6 +38,9 @@ src/
   lib/region.ts                  where the kid lives (US / KR) → money (lead)
   lib/router.ts                  in-memory router (URL never changes)  (ui-foundation)
   lib/store.ts                   settings / collection / history       (ui-foundation)
+  lib/mirror.ts                  IndexedDB copy of My Cards (restore only)
+  lib/storageContext.ts          where the app runs: Home Screen app / browser / in-app / test address
+  lib/backup.ts                  My Cards backup codes and files (move cards between storage areas)
   lib/localName.ts, weekChange.ts, useOnline.ts   small helpers shared by several screens (see below)
   components/*                   shared UI components                  (ui-foundation)
   components/ExternalLink.tsx, grownUpGate.ts   every link to a shop goes through the grown-up check
@@ -576,8 +579,9 @@ export function markCountryAsked(): void;        // the question was answered or
 export function useCollection(): CollectionItem[];                             // newest first
 export function collectionKey(card: Pick<CardBrief, 'lang' | 'id'>, variantKey: string): string; // `${lang}:${id}:${variant}`
 export function addToCollection(card: CardDetail, variantKey: string): string; // returns the key; qty+1 if present;
-//   priceUsd (and firstPriceUsd when new) = that variant's summary.market, priceApprox = summary.converted; keeps
-//   imageFallback + dexIds. The first call asks navigator.storage.persist() (best effort).
+//   priceUsd (and firstPriceUsd when new) = that variant's summary.market, priceApprox = pricing.isApproxPrice; keeps
+//   imageFallback + dexIds. The first call asks navigator.storage.persist() (best effort). Whether it was saved:
+//   getCollectionSaveState().
 export function removeFromCollection(key: string): void;                       // also drops its thumb
 export function setQuantity(key: string, qty: number): void;                    // floors, max 999, ≤ 0 removes
 export function updateCollectionPrice(key: string, priceUsd: number | null, approx?: boolean): void; // firstPriceUsd filled if null
@@ -587,8 +591,19 @@ export function updateCollectionPrice(key: string, priceUsd: number | null, appr
 //   firstPriceUsd = the new price and the card leaves the snapshot baselines, so gain/loss and "since last week"
 //   don't show the switch as a price move.
 export function onCollectionSaveFailed(listener: () => void): () => void;
-//   Fires when a change to My Cards could not be written even after writeWithRoom freed cache space (App shows a
-//   "couldn't save" toast, at most once a minute). The change still shows until the app is closed.
+//   Fires when a change to My Cards could not be saved (App shows a "couldn't save" toast, at most once a minute).
+//   The change still shows until the app is closed, and useCollectionSaveState says so until a save works.
+export function useCollectionSaveState(): CollectionSaveState;                 // { saved, problem?: 'blocked'|'full'|'unknown', lastSavedAt? }
+export function getCollectionSaveState(): CollectionSaveState;
+export function retryCollectionSave(): boolean;                                 // writes what My Cards shows again
+export function onCollectionRestored(listener: (count: number) => void): () => void; // cards put back from the IndexedDB copy
+export function restoreFromMirror(): Promise<number>;                           // runs once after the first read (browser only)
+export function exportCollection(): CollectionItem[];                           // what My Cards shows, for backups
+export function importCollection(items: readonly unknown[]): ImportResult;     // merge a backup by key; never removes
+//   Same key: the larger qty, the earlier addedAt (with its firstPriceUsd), the newer price. Invalid entries are skipped,
+//   a key that doesn't match its card is rebuilt. → { added, updated, skipped, saved }.
+export function isCollectionItem(x: unknown): x is CollectionItem;
+export function askPersistentStorage(): void;                                   // navigator.storage.persist(), once
 export function setCollectionThumb(key: string, dataUrl: string): void;        // user's photo for a saved card ("cc:thumbs")
 export function useCollectionThumbs(): Readonly<Record<string, string>>;       // collection key → photo data URL
 export function rememberScanPhoto(cardId: string, dataUrl: string): void;      // memory only, last 10 (Scan → Card screen)
@@ -602,8 +617,23 @@ export function recordSnapshot(items: readonly CollectionItem[]): void;         
 export function collectionTotalUsd(items: CollectionItem[]): number;            // Σ priceUsd × qty (not rounded to cents; 1/100 cent against float noise)
 export function resetAllData(): void;                                           // all keys above + settings + scan photos + clearCache()
 // Keys "cc:settings", "cc:collection", "cc:history", "cc:snapshots", "cc:thumbs", each { v: 1, data }; unreadable,
-//   foreign-version or malformed entries fall back to defaults (bad items are dropped individually). Thumbs live in
-//   their own key so a full quota can only cost photos (then only the newest that fit are saved); pass small JPEGs (~200px wide).
+//   foreign-version or malformed entries fall back to defaults. Every change re-reads the key right before writing
+//   (Persisted.update), so a second tab or a value read wrongly at startup can't be written back over newer data, and a
+//   key that suddenly reads empty although something was stored is treated as a hiccup (memory is kept). Thumbs live
+//   in their own key, capped at 1.2 M characters (~60 photos, newest kept), and give way to My Cards when storage is
+//   full; pass small JPEGs (~200px wide).
+// My Cards never loses a card through the app (store.ts "My Cards" comment):
+//   - each change applies to what storage holds now plus the cards only this page has (a change not saved yet, or a
+//     card storage lost); a card only goes away through removeFromCollection / setQuantity(0) / resetAllData;
+//   - stored entries this version can't validate are hidden but written back untouched; a value it can't read at all
+//     (a newer app) is never written over (the change shows, marked not saved);
+//   - a save is read back 1.5 s later (Safari's setItem returns before its storage process writes, and quietly goes
+//     back to the old value when that write fails); one more try, then "not saved";
+//   - a copy lives in IndexedDB (lib/mirror.ts, written after every successful save, debounced 500 ms, at once for
+//     removals and resets); restoreFromMirror puts back cards localStorage lost and tells onCollectionRestored.
+//   What code can't change: iOS keeps separate storage for each Home Screen icon, Safari, each Private tab (erased when
+//   it closes) and each app's built-in browser. The app says where it is (lib/storageContext.ts, StorageNotice, Settings
+//   "Where My Cards is saved") and moves cards between them with backup codes / files (lib/backup.ts).
 // Settings default: { uiLang: navigator.language startsWith 'ko' ? 'ko' : 'en', country: guessCountry().country,
 //   ...countryDefaults(country) (KR → KRW + ja, US → USD + en), ebayWorkerUrl: '', theme: 'system' }. Saved settings are
 //   kept as they are; ones saved before `country` existed get the detected country and keep a currency / searchLang only

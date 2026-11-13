@@ -448,6 +448,324 @@ describe('collection', () => {
   });
 });
 
+describe('collection: a saved card is never lost by the app', () => {
+  type Item = import('./types').CollectionItem;
+  const saved = () => JSON.parse(ls.getItem('cc:collection')!).data as Item[];
+  const keys = (items: { key: string }[]) => items.map((i) => i.key);
+  const add = (id: string) => store.addToCollection(card(id, [variant('normal', 1)]), 'normal');
+
+  /** Storage whose first read of My Cards comes back empty (Safari when its storage process isn't connected yet). */
+  class FirstReadEmpty extends MemoryStorage {
+    private fooled = false;
+    getItem(k: string) {
+      if (k === 'cc:collection' && !this.fooled) {
+        this.fooled = true;
+        return null;
+      }
+      return super.getItem(k);
+    }
+  }
+
+  /** Storage that accepts a write without error but doesn't keep it (Safari after its storage process failed to write). */
+  class SilentStorage extends MemoryStorage {
+    silent = false;
+    setItem(k: string, v: string) {
+      if (this.silent && k === 'cc:collection') return;
+      super.setItem(k, v);
+    }
+  }
+
+  /** Storage that refuses access until `blocked` is turned off (Safari "Block All Cookies"). */
+  class BlockedStorage extends MemoryStorage {
+    blocked = true;
+    getItem(k: string) {
+      if (this.blocked) throw new DOMException('denied', 'SecurityError');
+      return super.getItem(k);
+    }
+    setItem(k: string, v: string) {
+      if (this.blocked) throw new DOMException('denied', 'SecurityError');
+      super.setItem(k, v);
+    }
+  }
+
+  it('a wrong empty read at startup does not overwrite the saved cards on the next add', async () => {
+    add('SV8a-001');
+    add('SV8a-002');
+    const storage = new FirstReadEmpty();
+    for (let i = 0; i < ls.length; i++) storage.setItem(ls.key(i)!, ls.getItem(ls.key(i)!)!);
+    await freshStore(storage);
+    expect(peek(store.useCollection)).toEqual([]); // the wrong read
+    add('SV8a-003');
+    expect(keys(saved())).toEqual(['ja:SV8a-003:normal', 'ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+    expect(keys(peek(store.useCollection))).toEqual(keys(saved()));
+  });
+
+  it('storage that suddenly reads empty mid-session keeps what memory knows', () => {
+    add('SV8a-001');
+    add('SV8a-002');
+    peek(store.useCollection);
+    ls.removeItem('cc:collection'); // a hiccup, not a change made by the app
+    add('SV8a-003');
+    expect(keys(saved())).toEqual(['ja:SV8a-003:normal', 'ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+  });
+
+  it('a second page with an old list does not wipe what the first one saved', async () => {
+    add('SV8a-001');
+    const pageA = store;
+    peek(pageA.useCollection);
+    vi.resetModules();
+    const pageB = await import('./store');
+    pageB.addToCollection(card('SV8a-002', [variant('normal', 1)]), 'normal');
+    pageA.addToCollection(card('SV8a-003', [variant('normal', 1)]), 'normal'); // page A never heard of 002
+    expect(keys(saved()).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+  });
+
+  it('keeps stored entries it cannot read and writes them back untouched', async () => {
+    add('SV8a-001');
+    const good = saved()[0];
+    const odd = { ...good, key: 'ja:SV8a-009:normal', setName: null };
+    ls.setItem('cc:collection', JSON.stringify({ v: 1, data: [good, odd] }));
+    await reload();
+    expect(keys(peek(store.useCollection))).toEqual([good.key]); // not shown…
+    add('SV8a-002');
+    expect(saved()).toContainEqual(odd); // …but never erased
+    expect(saved()).toHaveLength(3);
+  });
+
+  it('never writes over a value from a newer app, and says the card is not saved', async () => {
+    const newer = JSON.stringify({ v: 2, data: { cards: ['x'] } });
+    ls.setItem('cc:collection', newer);
+    await reload();
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    add('SV8a-001');
+    expect(ls.getItem('cc:collection')).toBe(newer);
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'unknown' });
+    expect(keys(peek(store.useCollection))).toEqual(['ja:SV8a-001:normal']); // shown for this session
+  });
+
+  it('reports blocked storage until a save works, then saves what only memory had', async () => {
+    const storage = new BlockedStorage();
+    await freshStore(storage);
+    add('SV8a-001');
+    expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'blocked' });
+    expect(peek(store.useCollectionSaveState).saved).toBe(false);
+    storage.blocked = false;
+    expect(store.retryCollectionSave()).toBe(true);
+    expect(keys(saved())).toEqual(['ja:SV8a-001:normal']);
+    expect(store.getCollectionSaveState()).toMatchObject({ saved: true });
+    expect(store.getCollectionSaveState().lastSavedAt).toMatch(/^\d{4}-/);
+  });
+
+  it('a card not saved before goes along with the next change that can be saved', async () => {
+    const storage = new BlockedStorage();
+    await freshStore(storage);
+    add('SV8a-001');
+    storage.blocked = false;
+    add('SV8a-002');
+    expect(keys(saved())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+    expect(store.getCollectionSaveState().saved).toBe(true);
+  });
+
+  it('a change that changes nothing writes nothing and keeps the same list (no re-render)', () => {
+    const key = add('SV8a-001');
+    const before = store.exportCollection();
+    const raw = ls.getItem('cc:collection');
+    store.setQuantity(key, 1);
+    store.updateCollectionPrice('ja:other:normal', 5);
+    expect(store.exportCollection()).toBe(before);
+    expect(ls.getItem('cc:collection')).toBe(raw);
+  });
+
+  it('a no-op change on blocked storage does not report a failure', async () => {
+    const storage = new BlockedStorage();
+    await freshStore(storage);
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    store.updateCollectionPrice('ja:nothing:normal', 1);
+    expect(failed).not.toHaveBeenCalled();
+    expect(store.getCollectionSaveState().saved).toBe(true);
+  });
+
+  it('photos give way to cards when storage is full', async () => {
+    await freshStore(new MemoryStorage(7500));
+    const photo = (n: number) => `data:${String(n).repeat(1000)}`;
+    for (let i = 1; i <= 3; i++) store.setCollectionThumb(`k${i}`, photo(i)); // ≈ 6.1 KB of 7.5 KB
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    for (let i = 1; i <= 3; i++) add(`SV8a-00${i}`); // ≈ 0.75 KB each: the second no longer fits next to all photos
+    expect(saved()).toHaveLength(3);
+    expect(failed).not.toHaveBeenCalled();
+    const left = Object.keys(JSON.parse(ls.getItem('cc:thumbs')!).data);
+    expect(left.length).toBeLessThan(3);
+    expect(left).toContain('k3'); // the newest photo stays longest
+  });
+
+  it('caps the photos so they never fill storage by themselves', () => {
+    const big = (n: number) => `data:${String(n % 10).repeat(30_000)}`;
+    for (let i = 0; i < 60; i++) store.setCollectionThumb(`k${i}`, big(i));
+    const kept = JSON.parse(ls.getItem('cc:thumbs')!).data as Record<string, string>;
+    const chars = Object.entries(kept).reduce((n, [k, v]) => n + k.length + v.length, 0);
+    expect(chars).toBeLessThanOrEqual(1_200_000);
+    expect(Object.keys(kept)).toContain('k59');
+    expect(Object.keys(kept)).not.toContain('k0');
+  });
+
+  it('reads a save back and reports one that storage quietly dropped', async () => {
+    vi.useFakeTimers();
+    const storage = new SilentStorage();
+    await freshStore(storage);
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    storage.silent = true;
+    add('SV8a-001');
+    expect(store.getCollectionSaveState().saved).toBe(true); // setItem didn't complain
+    vi.advanceTimersByTime(1500); // read back: missing, so one more try
+    expect(failed).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1500); // still missing
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'unknown' });
+    storage.silent = false;
+    expect(store.retryCollectionSave()).toBe(true);
+    vi.advanceTimersByTime(1500);
+    expect(store.getCollectionSaveState().saved).toBe(true);
+    expect(keys(saved())).toEqual(['ja:SV8a-001:normal']);
+  });
+
+  it('a read-back finds the save that a quick second try made stick', async () => {
+    vi.useFakeTimers();
+    await freshStore();
+    add('SV8a-001');
+    ls.removeItem('cc:collection'); // dropped once
+    vi.advanceTimersByTime(1500);
+    expect(keys(saved())).toEqual(['ja:SV8a-001:normal']);
+    vi.advanceTimersByTime(1500);
+    expect(store.getCollectionSaveState().saved).toBe(true);
+  });
+
+  describe('the IndexedDB copy', () => {
+    let copy: unknown;
+    let mirror: typeof import('./mirror');
+    const backend = {
+      read: async () => copy,
+      write: async (v: unknown) => {
+        copy = v;
+      },
+    };
+    beforeEach(async () => {
+      copy = undefined;
+      mirror = await import('./mirror');
+      mirror.setMirrorBackend(backend);
+    });
+
+    it('puts back cards localStorage lost, and says how many', async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      ls.removeItem('cc:collection'); // localStorage lost My Cards while the app was closed
+      await reload();
+      mirror = await import('./mirror');
+      mirror.setMirrorBackend(backend);
+      const told = vi.fn();
+      store.onCollectionRestored(told);
+      expect(await store.restoreFromMirror()).toBe(2);
+      expect(told).toHaveBeenCalledWith(2);
+      expect(keys(saved())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+      expect(keys(peek(store.useCollection))).toEqual(keys(saved()));
+    });
+
+    it('brings back only what is missing, keeping newer changes', async () => {
+      add('SV8a-001');
+      await mirror.flushMirror();
+      add('SV8a-001'); // two copies now, saved in localStorage
+      add('SV8a-002');
+      expect(await store.restoreFromMirror()).toBe(0);
+      expect(saved().find((i) => i.key === 'ja:SV8a-001:normal')?.qty).toBe(2);
+    });
+
+    it('a removed card does not come back from the copy', async () => {
+      const key = add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      store.removeFromCollection(key); // the copy is written right away for removals
+      await Promise.resolve();
+      await reload();
+      mirror = await import('./mirror');
+      mirror.setMirrorBackend(backend);
+      expect(await store.restoreFromMirror()).toBe(0);
+      expect(keys(saved())).toEqual(['ja:SV8a-002:normal']);
+    });
+
+    it('starts the copy for cards saved before it existed', async () => {
+      add('SV8a-001');
+      copy = undefined; // an app version without the copy saved this card
+      await store.restoreFromMirror();
+      await mirror.flushMirror();
+      expect((copy as { data: Item[] }).data.map((i) => i.key)).toEqual(['ja:SV8a-001:normal']);
+    });
+
+    it('a reset empties the copy too', async () => {
+      add('SV8a-001');
+      await mirror.flushMirror();
+      store.resetAllData();
+      await Promise.resolve();
+      await reload();
+      mirror = await import('./mirror');
+      mirror.setMirrorBackend(backend);
+      expect(await store.restoreFromMirror()).toBe(0);
+      expect(saved()).toEqual([]);
+    });
+  });
+});
+
+describe('collection backups', () => {
+  type Item = import('./types').CollectionItem;
+  const saved = () => JSON.parse(ls.getItem('cc:collection')!).data as Item[];
+
+  it('exports what My Cards shows', () => {
+    store.addToCollection(card(), 'normal');
+    expect(store.exportCollection().map((i) => i.key)).toEqual(['ja:SV8a-084:normal']);
+  });
+
+  it('merges a backup by card: new cards added, the same card merged, nothing removed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+    store.addToCollection(card('SV8a-001', [variant('normal', 1)]), 'normal');
+    const theirs = store.exportCollection()[0];
+    vi.setSystemTime(new Date('2026-11-05T00:00:00Z'));
+    store.resetAllData();
+    store.addToCollection(card('SV8a-001', [variant('normal', 2)]), 'normal'); // added later here, with a newer price
+    store.addToCollection(card('SV8a-002', [variant('normal', 3)]), 'normal');
+
+    const other: Item = { ...theirs, key: 'ja:SV8a-003:normal', id: 'SV8a-003', localId: '003' };
+    const result = store.importCollection([{ ...theirs, qty: 4 }, other, { key: 'broken' }, null]);
+    expect(result).toEqual({ added: 1, updated: 1, skipped: 2, saved: true });
+
+    const byKey = Object.fromEntries(saved().map((i) => [i.key, i]));
+    expect(Object.keys(byKey).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+    // The larger count, the earlier "added" with its first price, the newer price.
+    expect(byKey['ja:SV8a-001:normal']).toMatchObject({ qty: 4, addedAt: '2026-11-01T00:00:00.000Z', firstPriceUsd: 1, priceUsd: 2 });
+    expect(byKey['ja:SV8a-002:normal'].qty).toBe(1);
+  });
+
+  it('importing the same backup twice changes nothing the second time', () => {
+    store.addToCollection(card(), 'normal');
+    const backup = store.exportCollection();
+    store.resetAllData();
+    expect(store.importCollection(backup)).toMatchObject({ added: 1, updated: 0 });
+    expect(store.importCollection(backup)).toMatchObject({ added: 0, updated: 0, saved: true });
+  });
+
+  it('rebuilds a key that does not match its card and caps the count', () => {
+    store.addToCollection(card(), 'normal');
+    const item = store.exportCollection()[0];
+    store.resetAllData();
+    store.importCollection([{ ...item, key: 'whatever', qty: 5000.7 }]);
+    expect(saved()[0]).toMatchObject({ key: 'ja:SV8a-084:normal', qty: 999 });
+  });
+});
+
 describe('photos', () => {
   it('remembers the last 10 scan photos in memory only', () => {
     for (let i = 0; i < 12; i++) store.rememberScanPhoto(`c${i}`, `data:${i}`);

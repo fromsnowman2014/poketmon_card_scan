@@ -19,6 +19,8 @@
   --up-soft: #34d39922;
   --down: #f87171;
   --down-soft: #f8717122;
+  --warn: #fbbf24; /* something needs a grown-up's attention (e.g. My Cards not saved) */
+  --warn-soft: #fbbf241f;
   --overlay: #02060fb3;
   --focus: #60a5fa;
   --chrome: #0a1020d9; /* translucent top/tab bar backdrop */
@@ -107,6 +109,8 @@
   --up-soft: #046c4e18;
   --down: #b91c1c;
   --down-soft: #b91c1c14;
+  --warn: #92400e;
+  --warn-soft: #f59e0b1f;
   --overlay: #0b153066;
   --focus: #1d4ed8;
   --chrome: #f4f7fee0;

@@ -813,6 +813,39 @@ button.card-art:active {
   background: var(--surface);
 }
 
+/* Added, but My Cards could not be saved (storage blocked or full): never by color alone. */
+.card-collect {
+  display: grid;
+  gap: 8px;
+}
+
+.card-owned-unsaved {
+  border-color: var(--warn);
+}
+
+.card-unsaved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
+.card-unsaved-text {
+  flex: 1 1 180px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.card-unsaved-retry {
+  flex: none;
+  min-height: 44px;
+}
+
 /* ---------- eBay ---------- */
 
 .card-ebay {

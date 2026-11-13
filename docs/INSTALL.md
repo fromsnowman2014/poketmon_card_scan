@@ -24,7 +24,12 @@ You need the app's web address. Once the repo owner has done the one-time
 3. Scroll down and tap **Add to Home Screen**. Keep **Open as Web App** on if you see it. Tap **Add**.
 4. Open **CardCheck** from the Home Screen. The first time you scan, tap **Allow** for the camera.
 
-> Collect cards in the Home Screen app, not in a Safari tab: the two keep **separate** "My Cards".
+> **Always collect cards in the Home Screen app.** iPhone keeps a **separate** "My Cards" for each of these:
+> the Home Screen app, a Safari tab, a Private tab (erased when the tab closes), and a page opened inside another app
+> (KakaoTalk, a chat app, the Claude app…). Removing the icon and adding it again also starts an empty My Cards.
+> The app tells you where it is (a note on **My Cards**, and **Settings → Where My Cards is saved**). To move cards
+> from one to another: **Settings → Move or back up My Cards** → *Copy backup code* in one, *Paste backup code* in
+> the other.
 
 ---
 
@@ -155,6 +160,8 @@ This uses a free **Cloudflare Quick Tunnel**: no account and no sign-up. It give
 Good to know:
 
 - The address is **new every time** you start the tunnel, so yesterday's Home Screen icon won't open. Add the new one.
+  A new address also starts with an **empty My Cards** (move test cards with a backup code, see Part 1). Test saving
+  cards on the real address (github.io) or a stable preview (option D).
 - While the tunnel runs, anyone with the link can open your dev app. Don't share it, and press **Ctrl + C** in both terminals when you're done.
 
 ### Option C — Test the finished build (offline mode, updates)
@@ -205,7 +212,8 @@ when the app is closed. To get it right away, swipe the app away in the app swit
   break, so give it a day or two; if it stays red, open the run and read the error at the top.
 
 **Remove the app:** touch and hold the **CardCheck** icon → choose **Remove** (or **Delete Bookmark**) and confirm.
-⚠️ This also deletes the "My Cards" saved in that app.
+⚠️ This also deletes the "My Cards" saved in that app. Back up first: **Settings → Move or back up My Cards →
+Save as file** (or *Copy backup code*), and load it into the new icon the same way.
 
 ---
 
@@ -222,6 +230,7 @@ when the app is closed. To get it right away, swipe the app away in the app swit
 | The camera says "Can't use the camera" | The page isn't `https://`. Use option B or C, or tap **Use Camera app** / **Photos**. |
 | No **Add to Home Screen** button | Open the page in **Safari** itself, not inside another app. |
 | The Home Screen app still shows the old version | Swipe it away in the app switcher and open it again. |
+| My Cards is empty after reopening the app | Open **Settings → Where My Cards is saved** and check the place. Cards stay in the place they were added: always open the **same Home Screen icon** (not a Safari tab, a Private tab, or a link inside KakaoTalk or another app). Cards added elsewhere are still there: open that place, **Settings → Move or back up My Cards → Copy backup code**, then **Paste backup code** in the Home Screen app. If the app said **"Not saved yet"**: iPhone **Settings → Apps → Safari → Advanced** → turn off **Block All Cookies**, and free up some iPhone storage. |
 | Prices or pictures don't load | The app needs the internet to look up cards (saved cards still show offline). |
 | Japanese cards show `≈` Cardmarket prices, not TCGplayer prices | On your computer: copy the price files ([Part 2](#japanese-card-prices-on-your-computer-optional)) and restart `npm run dev`. In the real app: the daily price job has probably been paused or is failing. Repo owner: **Actions → Build & Deploy → Enable workflow**, then **Run workflow** ([Part 4](#part-4--update-or-remove)). Some cards simply aren't on TCGplayer and always show Cardmarket. |
 

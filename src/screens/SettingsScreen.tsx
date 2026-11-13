@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { version } from '../../package.json';
 import { ExternalLink } from '../components/ExternalLink';
 import { Icon } from '../components/Icon';
 import { TopBar } from '../components/TopBar';
 import { useStrings, type Strings } from '../lib/i18n';
+import { useRoute } from '../lib/router';
 import { updateSettings, useSettings } from '../lib/store';
 import type { Settings } from '../lib/types';
 import { EbayWorker } from './settings/EbayWorker';
@@ -122,8 +123,32 @@ function Field<T extends string>({ id, label, note, value, options, onChange }: 
   );
 }
 
+/** `/settings?section=<name>` opens the screen at that section (links from the "where cards are saved" notice). */
+const SECTION_IDS: Partial<Record<string, string>> = { backup: 'settings-backup', install: 'settings-install' };
+
+function useScrollToSection(section: string | null): void {
+  useEffect(() => {
+    const id = section ? SECTION_IDS[section] : undefined;
+    const el = id ? document.getElementById(id) : null;
+    if (!el) return;
+    // After the router has put the page at the top for the new screen.
+    const frame = requestAnimationFrame(() => {
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+      // Screen readers start reading at the section too.
+      const heading = el.querySelector<HTMLElement>('h2');
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [section]);
+}
+
 export default function SettingsScreen() {
   const t = useStrings(STRINGS);
+  useScrollToSection(useRoute().query.get('section'));
   const settings = useSettings();
   // Bumped after "Reset all data" so sections holding local drafts start over from the reset settings.
   const [resets, setResets] = useState(0);

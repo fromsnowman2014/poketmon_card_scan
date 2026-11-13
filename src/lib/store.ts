@@ -1,7 +1,10 @@
 // App state persisted to localStorage: settings, My Cards, recently viewed, daily value snapshots.
 // Each key holds a versioned envelope { v, data }; anything unreadable falls back to defaults.
+// Every change re-reads what storage holds right before writing (another tab, or a value read at startup that was
+// wrong), and My Cards never loses a card by being written: see the My Cards section.
 import { useSyncExternalStore } from 'react';
 import { clearCache, writeWithRoom } from './cache';
+import { flushMirror, readMirror, saveMirror } from './mirror';
 import { isApproxPrice } from './pricing';
 import { COUNTRIES, countryDefaults, guessCountry } from './region';
 import type {
@@ -46,43 +49,100 @@ function storage(): Storage | undefined {
   }
 }
 
-function readKey(key: string): unknown {
+type ReadResult =
+  /** `data` is undefined (and `raw` null) when nothing is stored. */
+  | { state: 'ok'; raw: string | null; data: unknown }
+  /** No storage, or it refused access. */
+  | { state: 'blocked' }
+  /** Something this version can't read: corrupt, or written by a newer app. */
+  | { state: 'foreign'; raw: string };
+
+function readEnvelope(key: string): ReadResult {
+  const s = storage();
+  if (!s) return { state: 'blocked' };
+  let raw: string | null;
   try {
-    const raw = storage()?.getItem(key);
-    if (!raw) return undefined;
-    const envelope: unknown = JSON.parse(raw);
-    return isObj(envelope) && envelope.v === VERSION ? envelope.data : undefined;
+    raw = s.getItem(key);
   } catch {
-    return undefined;
+    return { state: 'blocked' };
   }
+  if (!raw) return { state: 'ok', raw: null, data: undefined };
+  try {
+    const envelope: unknown = JSON.parse(raw);
+    if (isObj(envelope) && envelope.v === VERSION) return { state: 'ok', raw, data: envelope.data };
+  } catch {
+    // corrupt: like a value from a newer app
+  }
+  return { state: 'foreign', raw };
 }
 
+function readKey(key: string): unknown {
+  const r = readEnvelope(key);
+  return r.state === 'ok' ? r.data : undefined;
+}
+
+/** Why a change could not be saved: storage blocked (e.g. Safari's "Block All Cookies"), full, or something else. */
+export type SaveProblem = 'blocked' | 'full' | 'unknown';
+
+type WriteResult = { ok: true; raw: string } | { ok: false; problem: SaveProblem };
+
+function errorName(e: unknown): string {
+  return typeof e === 'object' && e !== null && 'name' in e ? String((e as { name: unknown }).name) : '';
+}
+
+const isQuotaError = (e: unknown) =>
+  ['QuotaExceededError', 'NS_ERROR_DOM_QUOTA_REACHED'].includes(errorName(e)) ||
+  (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 22);
+
 /**
- * False when the value could not be saved (private mode, or quota even after dropping cached API data —
- * cache.ts can always fetch that again, the kid's cards cannot be).
+ * Saves `data` under `key`. When storage is full, cached API data is dropped first (cache.ts can always fetch it
+ * again, the kid's cards cannot be fetched again).
  */
-function writeKey(key: string, data: unknown): boolean {
+function writeEnvelope(key: string, data: unknown): WriteResult {
   const s = storage();
-  if (!s) return false;
+  if (!s) return { ok: false, problem: 'blocked' };
   let raw: string;
   try {
     raw = JSON.stringify({ v: VERSION, data });
   } catch {
-    return false;
+    return { ok: false, problem: 'unknown' };
   }
-  return writeWithRoom(() => s.setItem(key, raw));
+  let error: unknown;
+  const ok = writeWithRoom(() => {
+    try {
+      s.setItem(key, raw);
+    } catch (e) {
+      error = e;
+      throw e;
+    }
+  });
+  if (ok) return { ok: true, raw };
+  if (isQuotaError(error)) return { ok: false, problem: 'full' };
+  return { ok: false, problem: errorName(error) === 'SecurityError' ? 'blocked' : 'unknown' };
+}
+
+/** False when the value could not be saved (blocked storage, or full even after dropping cached API data). */
+function writeKey(key: string, data: unknown): boolean {
+  return writeEnvelope(key, data).ok;
 }
 
 interface Persisted<T> {
   get(): T;
-  /** Updates memory + listeners; returns whether localStorage accepted it. */
+  /** Replaces the value (memory + listeners); returns whether localStorage accepted it. */
   set(next: T): boolean;
+  /**
+   * Applies `fn` to what storage holds right now (another tab may have changed it since this one read it) and saves
+   * the result. Nothing is written when `fn` returns its argument. Returns whether the result is saved.
+   */
+  update(fn: (current: T) => T): boolean;
   subscribe(listener: () => void): () => void;
 }
 
 /** A lazily loaded, persisted value. `load` turns whatever was stored (or undefined) into a valid T. */
 function persisted<T>(key: string, load: (raw: unknown) => T): Persisted<T> {
   let value: T | undefined;
+  /** The stored string `value` came from or was saved as (null: nothing stored); undefined while unknown. */
+  let seen: string | null | undefined;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
 
@@ -95,22 +155,53 @@ function persisted<T>(key: string, load: (raw: unknown) => T): Persisted<T> {
     });
   }
 
-  return {
-    get: () => (value ??= load(readKey(key))),
+  /**
+   * What storage holds now, loaded. Undefined when it can't be read, and when it suddenly holds nothing although a
+   * value was stored before: that is a storage hiccup, not a change (clearing goes through set()).
+   */
+  const fresh = (): { value: T; raw: string | null } | undefined => {
+    const r = readEnvelope(key);
+    if (r.state === 'blocked' || (r.state === 'ok' && r.raw === null && seen)) return undefined;
+    return { value: load(r.state === 'ok' ? r.data : undefined), raw: r.raw };
+  };
+
+  const self: Persisted<T> = {
+    get() {
+      if (value === undefined) {
+        const r = readEnvelope(key);
+        value = load(r.state === 'ok' ? r.data : undefined);
+        seen = r.state === 'blocked' ? undefined : r.raw;
+      }
+      return value;
+    },
     set(next) {
       value = next;
-      const saved = writeKey(key, next);
+      const w = writeEnvelope(key, next);
+      if (w.ok) seen = w.raw;
       notify();
-      return saved;
+      return w.ok;
+    },
+    update(fn) {
+      const now = fresh();
+      const base = now ? now.value : self.get();
+      const next = fn(base);
+      if (next !== base) return self.set(next);
+      if (now && value !== base) {
+        value = base;
+        seen = now.raw;
+        notify();
+      }
+      return true;
     },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
   };
+  return self;
 }
 
-function useStore<T>(store: Persisted<T>): T {
+function useStore<T>(store: Pick<Persisted<T>, 'get' | 'subscribe'>): T {
   return useSyncExternalStore(store.subscribe, store.get, store.get);
 }
 
@@ -196,10 +287,11 @@ export function useSettings(): Settings {
  * patch sets them. Picking a country (here or in the first-launch question) counts as answering that question.
  */
 export function updateSettings(patch: Partial<Settings>): void {
-  const current = settings.get();
-  const moved = patch.country !== undefined && patch.country !== current.country && COUNTRIES.includes(patch.country);
-  const next = moved ? { ...current, ...countryDefaults(patch.country!), ...patch } : { ...current, ...patch };
-  settings.set(loadSettings(next, current));
+  settings.update((current) => {
+    const moved = patch.country !== undefined && patch.country !== current.country && COUNTRIES.includes(patch.country);
+    const next = moved ? { ...current, ...countryDefaults(patch.country!), ...patch } : { ...current, ...patch };
+    return loadSettings(next, current);
+  });
   if (patch.country !== undefined) markCountryAsked();
 }
 
@@ -220,8 +312,19 @@ export function markCountryAsked(): void {
 }
 
 // ---------- My Cards ----------
+// The kid's cards can't be fetched again, so:
+// - every change starts from what storage holds right now, plus the cards this page has and storage lacks (a change
+//   not saved yet, or a card storage lost); a card only goes away through removeFromCollection;
+// - stored entries this version can't read are kept and written back untouched, and storage holding something this
+//   version doesn't understand (a newer app) is never written over;
+// - a save is read back a moment later (Safari can drop a write without telling the page);
+// - photos give way to cards when storage is full;
+// - a copy lives in IndexedDB (mirror.ts) and puts back cards localStorage lost;
+// - when a change could not be saved, useCollectionSaveState says so until it is (the screens show it).
+// What no code can fix: iOS keeps a separate storage area for each Home Screen icon, Safari, each Private tab and
+// each app's built-in browser (docs/INSTALL.md). Backups move cards between them (importCollection).
 
-function isCollectionItem(x: unknown): x is CollectionItem {
+export function isCollectionItem(x: unknown): x is CollectionItem {
   return (
     isObj(x) &&
     isStr(x.key) &&
@@ -245,26 +348,302 @@ function isCollectionItem(x: unknown): x is CollectionItem {
   );
 }
 
-const collectionStore = persisted('cc:collection', (raw) => (Array.isArray(raw) ? raw.filter(isCollectionItem) : []));
-const saveFailedListeners = new Set<() => void>();
+const COLLECTION_KEY = 'cc:collection';
 
-/** My Cards, telling `onCollectionSaveFailed` listeners when a change only lives in memory (storage full/blocked). */
-const collection: Persisted<CollectionItem[]> = {
-  ...collectionStore,
-  set(next) {
-    const saved = collectionStore.set(next);
-    if (!saved) saveFailedListeners.forEach((l) => l());
+/** Whether everything My Cards shows is saved (see useCollectionSaveState). */
+export interface CollectionSaveState {
+  /** False while a change to My Cards lives only in memory: it is lost when the app closes. */
+  saved: boolean;
+  /** Why the last save failed (when not saved). */
+  problem?: SaveProblem;
+  /** When My Cards was last written in this session, ISO. */
+  lastSavedAt?: string;
+}
+
+let saveState: CollectionSaveState = { saved: true };
+const saveStateListeners = new Set<() => void>();
+const saveFailedListeners = new Set<() => void>();
+const restoredListeners = new Set<(count: number) => void>();
+
+function setSaveState(next: CollectionSaveState): void {
+  if (next.saved === saveState.saved && next.problem === saveState.problem && next.lastSavedAt === saveState.lastSavedAt) return;
+  saveState = next;
+  saveStateListeners.forEach((l) => l());
+}
+
+function markSaved(at: string | undefined): void {
+  setSaveState(at ? { saved: true, lastSavedAt: at } : { saved: true });
+}
+
+function saveFailed(problem: SaveProblem): void {
+  setSaveState(saveState.lastSavedAt ? { saved: false, problem, lastSavedAt: saveState.lastSavedAt } : { saved: false, problem });
+  saveFailedListeners.forEach((l) => l());
+}
+
+interface StoredCollection {
+  state: 'ok' | 'blocked' | 'foreign';
+  items: CollectionItem[];
+  /** Stored entries this version can't read. */
+  extras: unknown[];
+  /** The stored string (null: nothing stored). */
+  raw: string | null;
+}
+
+function readCollection(): StoredCollection {
+  const r = readEnvelope(COLLECTION_KEY);
+  if (r.state === 'blocked') return { state: 'blocked', items: [], extras: [], raw: null };
+  if (r.state === 'foreign' || (r.data !== undefined && !Array.isArray(r.data))) {
+    return { state: 'foreign', items: [], extras: [], raw: r.raw };
+  }
+  const items: CollectionItem[] = [];
+  const extras: unknown[] = [];
+  for (const x of (r.data as unknown[] | undefined) ?? []) (isCollectionItem(x) ? items : extras).push(x);
+  return { state: 'ok', items, extras, raw: r.raw };
+}
+
+/** Newest first, by when each card was first added (the order addToCollection keeps). */
+const newestFirst = (items: CollectionItem[]) =>
+  [...items].sort((a, b) => (a.addedAt < b.addedAt ? 1 : a.addedAt > b.addedAt ? -1 : 0));
+
+/** `stored` plus the cards `memory` has and `stored` lacks; `stored` itself when there are none. */
+function union(stored: CollectionItem[], memory: readonly CollectionItem[] | undefined): CollectionItem[] {
+  if (!memory?.length) return stored;
+  const have = new Set(stored.map((i) => i.key));
+  const missing = memory.filter((i) => !have.has(i.key));
+  return missing.length ? newestFirst([...stored, ...missing]) : stored;
+}
+
+/** How long after a save it is read back. */
+const VERIFY_AFTER_MS = 1500;
+
+const collection = (() => {
+  let value: CollectionItem[] | undefined;
+  let extras: unknown[] = [];
+  /** The stored string as last read or written. */
+  let seen: string | null | undefined;
+  let verifyTimer: ReturnType<typeof setTimeout> | undefined;
+  let restoreStarted = false;
+  const listeners = new Set<() => void>();
+  const notify = () => listeners.forEach((l) => l());
+
+  /**
+   * Reads a save back a moment later. Safari's setItem returns before its storage process has written the value,
+   * and when that write fails (a full phone) Safari quietly goes back to the old value. One more try, then the
+   * failure shows.
+   */
+  function verifyLater(raw: string, retried = false): void {
+    const s = storage();
+    if (!s) return;
+    if (verifyTimer !== undefined) clearTimeout(verifyTimer);
+    verifyTimer = setTimeout(() => {
+      verifyTimer = undefined;
+      if (seen !== raw) return; // saved again (or by another tab) since: that value is the one that counts
+      let now: string | null = null;
+      try {
+        now = s.getItem(COLLECTION_KEY);
+      } catch {
+        // blocked now: counts as not saved
+      }
+      if (now === raw) return;
+      if (!retried) {
+        try {
+          s.setItem(COLLECTION_KEY, raw);
+          verifyLater(raw, true);
+          return;
+        } catch {
+          // full or blocked: report below
+        }
+      }
+      saveFailed('unknown');
+    }, VERIFY_AFTER_MS);
+  }
+
+  /** Writes `next` (plus the entries this version can't read). `shrunk`: a card went away, so the copy is written now. */
+  function write(next: CollectionItem[], shrunk: boolean): boolean {
+    const data = [...next, ...extras];
+    let w = writeEnvelope(COLLECTION_KEY, data);
+    // Photos give way to cards: drop the older ones and try again.
+    while (!w.ok && w.problem === 'full' && freeThumbSpace()) w = writeEnvelope(COLLECTION_KEY, data);
+    if (!w.ok) {
+      saveFailed(w.problem);
+      return false;
+    }
+    seen = w.raw;
+    markSaved(new Date().toISOString());
+    saveMirror(data);
+    // A removed card must not come back from an older copy if the app is closed right away.
+    if (shrunk) void flushMirror();
+    verifyLater(w.raw);
+    return true;
+  }
+
+  function get(): CollectionItem[] {
+    if (value === undefined) {
+      const r = readCollection();
+      value = r.items;
+      if (r.state === 'ok') {
+        extras = r.extras;
+        seen = r.raw;
+      }
+      if (!restoreStarted && typeof window !== 'undefined') {
+        restoreStarted = true;
+        // After the first render, off the startup path.
+        setTimeout(() => void restoreFromMirror(), 0);
+      }
+    }
+    return value;
+  }
+
+  /**
+   * Applies `op` to what storage holds now plus the cards only this page has, and saves the result. Storage that
+   * can't be read, or holds something this version doesn't understand, is never written over. `force` writes even
+   * when nothing changed (trying a failed save again).
+   */
+  function mutate(op: (items: CollectionItem[]) => CollectionItem[], force = false): boolean {
+    const r = readCollection();
+    // Storage that suddenly holds nothing although cards were stored before is a hiccup: keep what memory knows.
+    const lost = r.state === 'ok' && r.raw === null && !!seen;
+    if (r.state === 'ok' && !lost) extras = r.extras;
+    // Storage still holds what this page last read or wrote: memory is the same list (plus any card not saved yet).
+    const same = r.state === 'ok' && r.raw === seen && value !== undefined;
+    const base = r.state !== 'ok' ? (value ?? []) : same ? value! : union(r.items, value);
+    const next = op(base);
+    const before = value?.length ?? r.items.length;
+    if (r.state !== 'ok') {
+      value = next;
+      if (next !== base || force) saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
+      if (next !== base) notify();
+      return false;
+    }
+    if (!force && !lost && next === base && (same ? saveState.saved : next === r.items)) {
+      // Nothing to write: storage already holds exactly this.
+      if (!same) {
+        value = next;
+        seen = r.raw;
+        notify();
+      }
+      if (!saveState.saved) markSaved(saveState.lastSavedAt);
+      return true;
+    }
+    value = next;
+    const saved = write(next, next.length < before);
+    notify();
     return saved;
-  },
-};
+  }
+
+  /** Replaces everything (Reset all data). */
+  function set(next: CollectionItem[]): boolean {
+    extras = [];
+    value = next;
+    const saved = write(next, true);
+    notify();
+    return saved;
+  }
+
+  /** Back in the foreground: show what another tab saved meanwhile. Only adds and updates; never drops a card. */
+  function refresh(): void {
+    if (value === undefined) return;
+    const r = readCollection();
+    if (r.state !== 'ok' || r.raw === seen || (r.raw === null && seen)) return;
+    extras = r.extras;
+    seen = r.raw;
+    value = union(r.items, value);
+    notify();
+  }
+
+  /** Brings the IndexedDB copy up to date when everything shown is saved. */
+  function copyToMirror(): void {
+    if (value !== undefined && saveState.saved && seen !== undefined) saveMirror([...value, ...extras]);
+  }
+
+  if (typeof window !== 'undefined') {
+    // Another tab saved My Cards: take its list (and keep what this one hasn't saved yet).
+    window.addEventListener('storage', (e) => {
+      if ((e.key !== COLLECTION_KEY && e.key !== null) || value === undefined) return;
+      const r = readCollection();
+      if (r.state !== 'ok') return;
+      extras = r.extras;
+      seen = r.raw;
+      value = saveState.saved ? r.items : union(r.items, value);
+      notify();
+    });
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) refresh();
+    });
+    window.addEventListener('pagehide', () => void flushMirror());
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refresh();
+      else void flushMirror();
+    });
+  }
+
+  return {
+    get,
+    mutate,
+    set,
+    copyToMirror,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+})();
 
 /**
- * Called whenever a change to My Cards could not be written to localStorage (it still shows until the app is
- * closed). Show a "couldn't save" toast from the UI. Returns an unsubscribe function.
+ * Puts back the cards the IndexedDB copy has and localStorage lost (mirror.ts), then brings the copy up to date.
+ * Runs once, shortly after My Cards is first read. Returns how many cards came back (onCollectionRestored is told).
+ */
+export async function restoreFromMirror(): Promise<number> {
+  const copy = await readMirror();
+  const backup = (copy ?? []).filter(isCollectionItem);
+  let restored = 0;
+  collection.mutate((items) => {
+    const have = new Set(items.map((i) => i.key));
+    const missing = backup.filter((i) => !have.has(i.key));
+    restored = missing.length;
+    return missing.length ? newestFirst([...items, ...missing]) : items;
+  });
+  if (restored) restoredListeners.forEach((l) => l(restored));
+  else collection.copyToMirror();
+  return restored;
+}
+
+/**
+ * Called whenever a change to My Cards could not be saved (it still shows until the app is closed). Show a "couldn't
+ * save" toast from the UI. Returns an unsubscribe function.
  */
 export function onCollectionSaveFailed(listener: () => void): () => void {
   saveFailedListeners.add(listener);
   return () => saveFailedListeners.delete(listener);
+}
+
+/** Called with the number of cards put back from the IndexedDB copy (restoreFromMirror). */
+export function onCollectionRestored(listener: (count: number) => void): () => void {
+  restoredListeners.add(listener);
+  return () => restoredListeners.delete(listener);
+}
+
+export function getCollectionSaveState(): CollectionSaveState {
+  return saveState;
+}
+
+/** Whether every card My Cards shows is saved; `saved: false` until a later save works (or retryCollectionSave). */
+export function useCollectionSaveState(): CollectionSaveState {
+  return useSyncExternalStore(
+    (listener) => {
+      saveStateListeners.add(listener);
+      return () => saveStateListeners.delete(listener);
+    },
+    getCollectionSaveState,
+    getCollectionSaveState,
+  );
+}
+
+/** Tries to save My Cards again (after a failed save). Returns whether it is saved now. */
+export function retryCollectionSave(): boolean {
+  return collection.mutate((items) => items, true);
 }
 
 /** Stable key of a saved card: `${lang}:${id}:${variant}`. */
@@ -277,9 +656,17 @@ export function useCollection(): CollectionItem[] {
   return useStore(collection);
 }
 
-/** Asks the browser once to keep this site's storage (My Cards) when space runs low. Best effort, never throws. */
+/** My Cards as shown now (including cards not saved yet), for backups. */
+export function exportCollection(): CollectionItem[] {
+  return collection.get();
+}
+
+/**
+ * Asks the browser once to keep this site's storage (My Cards) when space runs low. Best effort, never throws.
+ * Safari grants it to Home Screen apps; call it at startup there.
+ */
 let persistAsked = false;
-function askPersistentStorage(): void {
+export function askPersistentStorage(): void {
   if (persistAsked) return;
   persistAsked = true;
   try {
@@ -314,6 +701,7 @@ function withPrice(item: CollectionItem, priceUsd: number | null, approx: boolea
  * Adds one copy of the card's variant (qty+1 when already saved) and returns its collection key.
  * The variant's summary.market becomes priceUsd (and firstPriceUsd for a new entry); priceApprox says whether it is
  * approximate (pricing.isApproxPrice). An already saved copy takes the new price by updateCollectionPrice's rules.
+ * Whether it could be saved: getCollectionSaveState().
  */
 export function addToCollection(card: CardDetail, variantKey: string): string {
   const key = collectionKey(card, variantKey);
@@ -321,48 +709,44 @@ export function addToCollection(card: CardDetail, variantKey: string): string {
   const price = summary?.market ?? null;
   const approx = price !== null && isApproxPrice(summary);
   const now = new Date().toISOString();
-  const items = collection.get();
   askPersistentStorage();
-
-  if (items.some((i) => i.key === key)) {
-    let rebased = false;
-    collection.set(
-      items.map((i) => {
+  let rebased = false;
+  collection.mutate((items) => {
+    if (items.some((i) => i.key === key)) {
+      return items.map((i) => {
         if (i.key !== key) return i;
         const priced = withPrice(i, price, approx, new Date(now));
         rebased = priced.rebased;
         return { ...priced.item, qty: Math.min(i.qty + 1, MAX_QTY) };
-      }),
-    );
-    if (rebased) dropFromBaselines(key);
-    return key;
-  }
-
-  const item: CollectionItem = {
-    key,
-    id: card.id,
-    lang: card.lang,
-    name: card.name,
-    image: card.image,
-    imageFallback: card.imageFallback,
-    setId: card.setId,
-    setName: card.setName,
-    localId: card.localId,
-    variant: variantKey,
-    qty: 1,
-    priceUsd: price,
-    priceApprox: approx,
-    firstPriceUsd: price,
-    priceUpdatedAt: now,
-    addedAt: now,
-    dexIds: card.dexIds,
-  };
-  collection.set([item, ...items]);
+      });
+    }
+    const item: CollectionItem = {
+      key,
+      id: card.id,
+      lang: card.lang,
+      name: card.name,
+      image: card.image,
+      imageFallback: card.imageFallback,
+      setId: card.setId,
+      setName: card.setName,
+      localId: card.localId,
+      variant: variantKey,
+      qty: 1,
+      priceUsd: price,
+      priceApprox: approx,
+      firstPriceUsd: price,
+      priceUpdatedAt: now,
+      addedAt: now,
+      dexIds: card.dexIds,
+    };
+    return [item, ...items];
+  });
+  if (rebased) dropFromBaselines(key);
   return key;
 }
 
 export function removeFromCollection(key: string): void {
-  collection.set(collection.get().filter((i) => i.key !== key));
+  collection.mutate((items) => (items.some((i) => i.key === key) ? items.filter((i) => i.key !== key) : items));
   dropThumb(key);
 }
 
@@ -373,7 +757,7 @@ export function setQuantity(key: string, qty: number): void {
     return;
   }
   const n = Math.min(Math.floor(qty), MAX_QTY);
-  collection.set(collection.get().map((i) => (i.key === key ? { ...i, qty: n } : i)));
+  collection.mutate((items) => (items.some((i) => i.key === key && i.qty !== n) ? items.map((i) => (i.key === key ? { ...i, qty: n } : i)) : items));
 }
 
 /**
@@ -385,13 +769,78 @@ export function setQuantity(key: string, qty: number): void {
  * switch as a price move.
  */
 export function updateCollectionPrice(key: string, priceUsd: number | null, approx = false): void {
-  const items = collection.get();
-  const saved = items.find((i) => i.key === key);
-  if (!saved) return;
-  const { item, rebased } = withPrice(saved, priceUsd, approx, new Date());
-  if (item === saved) return;
-  collection.set(items.map((i) => (i === saved ? item : i)));
+  let rebased = false;
+  collection.mutate((items) => {
+    const saved = items.find((i) => i.key === key);
+    if (!saved) return items;
+    const r = withPrice(saved, priceUsd, approx, new Date());
+    if (r.item === saved) return items;
+    rebased = r.rebased;
+    return items.map((i) => (i === saved ? r.item : i));
+  });
   if (rebased) dropFromBaselines(key);
+}
+
+/** How a backup was merged into My Cards (importCollection). */
+export interface ImportResult {
+  /** Cards that were not in My Cards. */
+  added: number;
+  /** Cards already there that changed (more copies, an older "added" date, a newer price). */
+  updated: number;
+  /** Entries that are not valid cards. */
+  skipped: number;
+  /** Whether the result is saved. */
+  saved: boolean;
+}
+
+/** One card saved in two places: the larger count, the earlier "added" (with its first price), the newer price. */
+function mergeItem(mine: CollectionItem, other: CollectionItem): CollectionItem {
+  const first = other.addedAt < mine.addedAt ? other : mine;
+  const newer = other.priceUsd !== null && Date.parse(other.priceUpdatedAt) > Date.parse(mine.priceUpdatedAt) ? other : mine;
+  const merged: CollectionItem = {
+    ...mine,
+    qty: Math.min(Math.max(mine.qty, other.qty), MAX_QTY),
+    addedAt: first.addedAt,
+    firstPriceUsd: first.firstPriceUsd ?? newer.firstPriceUsd,
+    priceUsd: newer.priceUsd,
+    priceApprox: newer.priceApprox,
+    priceUpdatedAt: newer.priceUpdatedAt,
+    image: mine.image ?? other.image,
+    imageFallback: mine.imageFallback ?? other.imageFallback,
+  };
+  const same = (Object.keys(merged) as (keyof CollectionItem)[]).every((k) => merged[k] === mine[k]);
+  return same ? mine : merged;
+}
+
+/**
+ * Merges cards from a backup (another storage area, another phone) into My Cards by key; nothing is removed.
+ * Entries that aren't valid cards are skipped; a key that doesn't match its card is rebuilt.
+ */
+export function importCollection(incoming: readonly unknown[]): ImportResult {
+  const valid = incoming
+    .filter(isCollectionItem)
+    .map((i) => ({ ...i, key: collectionKey(i, i.variant), qty: Math.min(Math.floor(i.qty), MAX_QTY) }));
+  let added = 0;
+  let updated = 0;
+  const saved = collection.mutate((items) => {
+    added = updated = 0;
+    const byKey = new Map(items.map((i) => [i.key, i] as const));
+    for (const other of valid) {
+      const mine = byKey.get(other.key);
+      if (!mine) {
+        byKey.set(other.key, other);
+        added++;
+        continue;
+      }
+      const merged = mergeItem(mine, other);
+      if (merged !== mine) {
+        byKey.set(other.key, merged);
+        updated++;
+      }
+    }
+    return added || updated ? newestFirst([...byKey.values()]) : items;
+  });
+  return { added, updated, skipped: incoming.length - valid.length, saved };
 }
 
 /**
@@ -407,23 +856,46 @@ export function collectionTotalUsd(items: readonly CollectionItem[]): number {
 // Stored apart from the collection so a full quota can only cost photos, never saved cards.
 
 const THUMBS_KEY = 'cc:thumbs';
+/** Photos may use this many characters in total (about 60 of them), so they never crowd out My Cards. */
+const THUMBS_MAX_CHARS = 1_200_000;
 const thumbs = persisted<Record<string, string>>(THUMBS_KEY, (raw) => {
   if (!isObj(raw)) return {};
   return Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => isStr(e[1])));
 });
 
+/** The newest photos within THUMBS_MAX_CHARS (oldest first in insertion order); `all` itself when they all fit. */
+function capThumbs(all: Record<string, string>): Record<string, string> {
+  const entries = Object.entries(all);
+  let total = entries.reduce((n, [k, v]) => n + k.length + v.length, 0);
+  let drop = 0;
+  while (entries.length - drop > 1 && total > THUMBS_MAX_CHARS) {
+    const [k, v] = entries[drop++];
+    total -= k.length + v.length;
+  }
+  return drop ? Object.fromEntries(entries.slice(drop)) : all;
+}
+
 /** Saves a (small, already downscaled) photo data URL as the picture for a collection item. */
 export function setCollectionThumb(key: string, dataUrl: string): void {
+  // From memory, not storage: memory may hold photos that didn't fit (below), and they still show this session.
   const next = { ...thumbs.get() };
   delete next[key]; // re-insert so this key becomes the newest
   next[key] = dataUrl;
-  if (thumbs.set(next)) return;
+  if (thumbs.set(capThumbs(next))) return;
   // Out of space: persist only the newest photos that fit; memory keeps all of them for this session.
-  const entries = Object.entries(next);
+  const entries = Object.entries(thumbs.get());
   while (entries.length > 1) {
     entries.shift();
     if (writeKey(THUMBS_KEY, Object.fromEntries(entries))) return;
   }
+}
+
+/** Drops the older half of the photos (they give way to cards when storage is full); false when there are none. */
+function freeThumbSpace(): boolean {
+  const entries = Object.entries(thumbs.get());
+  if (!entries.length) return false;
+  thumbs.set(Object.fromEntries(entries.slice(Math.ceil(entries.length / 2))));
+  return true;
 }
 
 function dropThumb(key: string): void {
@@ -503,8 +975,7 @@ export function pushHistory(card: CardDetail, priceUsd: number | null, approx = 
     imageFallback: card.imageFallback,
     ...(variantKey ? { variant: variantKey } : {}),
   };
-  const rest = recent.get().filter((h) => !(h.id === card.id && h.lang === card.lang));
-  recent.set([item, ...rest].slice(0, MAX_HISTORY));
+  recent.update((list) => [item, ...list.filter((h) => !(h.id === card.id && h.lang === card.lang))].slice(0, MAX_HISTORY));
 }
 
 export function clearHistory(): void {
@@ -563,15 +1034,15 @@ function sameCards(a: SnapshotCards | undefined, b: SnapshotCards): boolean {
 
 /** Takes a card out of every snapshot's per-card data: its saved prices are from another market than its new one. */
 function dropFromBaselines(key: string): void {
-  const list = snapshots.get();
-  if (!list.some((s) => s.cards && key in s.cards)) return;
-  snapshots.set(
-    list.map((s) => {
-      if (!s.cards || !(key in s.cards)) return s;
-      const cards = { ...s.cards };
-      delete cards[key];
-      return { ...s, cards };
-    }),
+  snapshots.update((list) =>
+    list.some((s) => s.cards && key in s.cards)
+      ? list.map((s) => {
+          if (!s.cards || !(key in s.cards)) return s;
+          const cards = { ...s.cards };
+          delete cards[key];
+          return { ...s, cards };
+        })
+      : list,
   );
 }
 
@@ -589,11 +1060,12 @@ export function recordSnapshot(items: readonly CollectionItem[]): void {
   const cards: SnapshotCards = {};
   for (const i of items) if (i.priceUsd !== null) cards[i.key] = [i.priceUsd, i.qty];
   const date = localDate();
-  const list = snapshots.get();
-  const last = list[list.length - 1];
-  if (last?.date === date && last.totalUsd === totalUsd && sameCards(last.cards, cards)) return;
-  const rest = last?.date === date ? list.slice(0, -1) : list;
-  snapshots.set(trimCards([...rest, { date, totalUsd, cards }], date).slice(-MAX_SNAPSHOTS));
+  snapshots.update((list) => {
+    const last = list[list.length - 1];
+    if (last?.date === date && last.totalUsd === totalUsd && sameCards(last.cards, cards)) return list;
+    const rest = last?.date === date ? list.slice(0, -1) : list;
+    return trimCards([...rest, { date, totalUsd, cards }], date).slice(-MAX_SNAPSHOTS);
+  });
 }
 
 // ---------- Reset ----------
