@@ -51,8 +51,11 @@ function storage(): Storage | undefined {
 }
 
 type ReadResult =
-  /** `data` is undefined (and `raw` null) when nothing is stored. `gen`: the envelope's save counter (0 if none). */
-  | { state: 'ok'; raw: string | null; data: unknown; gen: number }
+  /**
+   * `data` is undefined (and `raw` null) when nothing is stored. `gen`: the envelope's save counter (0 if none).
+   * `from`: My Cards saved while the IndexedDB copy was unread (see the My Cards section).
+   */
+  | { state: 'ok'; raw: string | null; data: unknown; gen: number; from?: number }
   /** No storage, or it refused access. */
   | { state: 'blocked' }
   /** Something this version can't read: corrupt, or written by a newer app. */
@@ -71,7 +74,10 @@ function readEnvelope(key: string): ReadResult {
   try {
     const envelope: unknown = JSON.parse(raw);
     if (isObj(envelope) && envelope.v === VERSION) {
-      return { state: 'ok', raw, data: envelope.data, gen: isNum(envelope.gen) ? envelope.gen : 0 };
+      const gen = isNum(envelope.gen) ? envelope.gen : 0;
+      return isNum(envelope.from)
+        ? { state: 'ok', raw, data: envelope.data, gen, from: envelope.from }
+        : { state: 'ok', raw, data: envelope.data, gen };
     }
   } catch {
     // corrupt: like a value from a newer app
@@ -98,15 +104,16 @@ const isQuotaError = (e: unknown) =>
   (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 22);
 
 /**
- * Saves `data` under `key` (with the save counter `gen`, for My Cards). When storage is full, cached API data is dropped
- * first (cache.ts can always fetch it again, the kid's cards cannot be fetched again).
+ * Saves `data` under `key` (with My Cards' save counter `gen` and `from`, see the My Cards section). When storage is
+ * full, cached API data is dropped first (cache.ts can always fetch it again, the kid's cards cannot be fetched again).
  */
-function writeEnvelope(key: string, data: unknown, gen?: number): WriteResult {
+function writeEnvelope(key: string, data: unknown, meta?: { gen: number; from?: number }): WriteResult {
   const s = storage();
   if (!s) return { ok: false, problem: 'blocked' };
   let raw: string;
   try {
-    raw = JSON.stringify(gen === undefined ? { v: VERSION, data } : { v: VERSION, data, gen });
+    // An undefined `from` is left out.
+    raw = JSON.stringify(meta === undefined ? { v: VERSION, data } : { v: VERSION, data, gen: meta.gen, from: meta.from });
   } catch {
     return { ok: false, problem: 'unknown' };
   }
@@ -316,15 +323,18 @@ export function markCountryAsked(): void {
 
 // ---------- My Cards ----------
 // The kid's cards can't be fetched again, so:
-// - every change starts from what storage holds right now, plus the cards this page has and storage lacks (a change
-//   not saved yet, or a card storage lost); a card only goes away through removeFromCollection;
+// - every change starts from what storage holds right now. A list another tab saved is taken, with this page's own
+//   changes put back on top (rebase); storage that went back to an older list, or lost it, is behind memory, and
+//   memory wins. A card only goes away through removeFromCollection (in this tab or another one);
 // - stored entries this version can't read are kept and written back untouched, and storage holding something this
 //   version doesn't understand (a newer app) is never written over;
 // - a save is read back a moment later (Safari can drop a write without telling the page);
 // - photos give way to cards when storage is full;
 // - a copy lives in IndexedDB (mirror.ts) and puts back cards localStorage lost. Every save counts up `gen` (stored in
 //   the envelope and in the copy), and only a copy newer than the stored list is used, so a removed card (or a reset)
-//   never comes back from a copy that fell behind;
+//   never comes back from a copy that fell behind. A save made before the copy could be read carries `from`: the
+//   counter of the stored list it builds on (-1: none), which the copy is compared with instead, so cards only the
+//   copy has still come back when localStorage was wiped and the copy couldn't be read at that launch;
 // - when a change could not be saved, useCollectionSaveState says so until it is (the screens show it).
 // What no code can fix: iOS keeps a separate storage area for each Home Screen icon, Safari, each Private tab and
 // each app's built-in browser (docs/INSTALL.md). Backups move cards between them (importCollection).
@@ -369,6 +379,8 @@ let saveState: CollectionSaveState = { saved: true };
 const saveStateListeners = new Set<() => void>();
 const saveFailedListeners = new Set<() => void>();
 const restoredListeners = new Set<(count: number) => void>();
+/** While true, a failed save is not announced to onCollectionSaveFailed: the caller says so itself (importCollection). */
+let quietFailures = false;
 
 function setSaveState(next: CollectionSaveState): void {
   if (next.saved === saveState.saved && next.problem === saveState.problem && next.lastSavedAt === saveState.lastSavedAt) return;
@@ -382,11 +394,10 @@ function markSaved(at: string | undefined): void {
 
 function saveFailed(problem: SaveProblem): void {
   setSaveState(saveState.lastSavedAt ? { saved: false, problem, lastSavedAt: saveState.lastSavedAt } : { saved: false, problem });
-  saveFailedListeners.forEach((l) => l());
+  if (!quietFailures) saveFailedListeners.forEach((l) => l());
 }
 
-interface StoredCollection {
-  state: 'ok' | 'blocked' | 'foreign';
+interface StoredLists {
   items: CollectionItem[];
   /** Stored entries this version can't read. */
   extras: unknown[];
@@ -394,7 +405,13 @@ interface StoredCollection {
   raw: string | null;
   /** Its save counter (0: none, or nothing stored). */
   gen: number;
+  /** Saved before the IndexedDB copy could be read: the counter of the stored list it builds on (-1: none). */
+  from?: number;
 }
+
+/** What storage holds: readable (`ok`), refusing access (`blocked`), or something this version can't read. */
+type StoredCollection = OkCollection | (StoredLists & { state: 'blocked' | 'foreign' });
+type OkCollection = StoredLists & { state: 'ok' };
 
 function readCollection(): StoredCollection {
   const r = readEnvelope(COLLECTION_KEY);
@@ -405,7 +422,8 @@ function readCollection(): StoredCollection {
   const items: CollectionItem[] = [];
   const extras: unknown[] = [];
   for (const x of (r.data as unknown[] | undefined) ?? []) (isCollectionItem(x) ? items : extras).push(x);
-  return { state: 'ok', items, extras, raw: r.raw, gen: r.gen };
+  const read: OkCollection = { state: 'ok', items, extras, raw: r.raw, gen: r.gen };
+  return r.from === undefined ? read : { ...read, from: r.from };
 }
 
 /** Newest first, by when each card was first added (the order addToCollection keeps). */
@@ -420,93 +438,201 @@ function union(stored: CollectionItem[], memory: readonly CollectionItem[] | und
   return missing.length ? newestFirst([...stored, ...missing]) : stored;
 }
 
+/** The same card with the same fields (or both missing). */
+function sameItem(x: CollectionItem | undefined, y: CollectionItem | undefined): boolean {
+  if (x === y) return true;
+  if (!x || !y) return false;
+  const fields = new Set([...Object.keys(x), ...Object.keys(y)]) as Set<keyof CollectionItem>;
+  for (const f of fields) {
+    const a = x[f];
+    const b = y[f];
+    if (a === b) continue;
+    if (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i])) continue;
+    return false;
+  }
+  return true;
+}
+
+/** The same cards with the same fields, in any order. */
+function sameList(a: readonly CollectionItem[], b: readonly CollectionItem[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const byKey = new Map(b.map((i) => [i.key, i] as const));
+  return a.every((i) => sameItem(i, byKey.get(i.key)));
+}
+
+/**
+ * `theirs` (another tab's save) with this page's changes since `base` (the list that save started from) put back on
+ * top. A card this page didn't change follows `theirs` (added, changed or removed there). A card this page added
+ * stays; one this page removed goes, and so does one this page changed while the other tab removed it (a removal
+ * wins). A card both changed is merged (mergeItem: the larger count, the newer price). Returns `theirs` itself when
+ * this page has nothing to add.
+ */
+function rebase(base: readonly CollectionItem[], mine: readonly CollectionItem[], theirs: CollectionItem[]): CollectionItem[] {
+  const was = new Map(base.map((i) => [i.key, i] as const));
+  const now = new Map(mine.map((i) => [i.key, i] as const));
+  const other = new Map(theirs.map((i) => [i.key, i] as const));
+  const out = new Map(other);
+  let changed = false;
+  for (const key of new Set([...was.keys(), ...now.keys()])) {
+    const before = was.get(key);
+    const after = now.get(key);
+    if (sameItem(before, after)) continue; // not changed here
+    const there = other.get(key);
+    let next: CollectionItem | undefined;
+    if (!after || (before && !there)) next = undefined; // removed here, or removed there
+    else if (!there) next = after; // added here
+    else next = sameItem(there, before) ? after : mergeItem(after, there);
+    if (sameItem(next, there)) continue;
+    changed = true;
+    if (next) out.set(key, next);
+    else out.delete(key);
+  }
+  return changed ? newestFirst([...out.values()]) : theirs;
+}
+
 /** How long after a save it is read back. */
 const VERIFY_AFTER_MS = 1500;
+/** How many stored lists a page remembers (see `known`). */
+const MAX_KNOWN = 8;
+
+/** A list storage held: read there, or saved by this page. */
+interface KnownList {
+  raw: string | null;
+  gen: number;
+  items: CollectionItem[];
+}
 
 const collection = (() => {
   let value: CollectionItem[] | undefined;
   let extras: unknown[] = [];
-  /** The stored string as last read or written. */
-  let seen: string | null | undefined;
   /** The highest save counter this page knows (stored lists, its own saves, the IndexedDB copy). */
   let gen = 0;
-  /** The last save until it is read back: what was written, and what storage held before it. */
-  let check: { raw: string; before: string | null } | undefined;
+  /**
+   * The lists storage held as far as this page knows, oldest first: read there, or saved by this page. The last one
+   * is what storage holds now. The older ones tell storage going back (Safari dropping a save) from another tab
+   * saving, and which list another tab's save started from.
+   */
+  let known: KnownList[] = [];
+  /** Memory has changes the last known list lacks (a save failed, or storage went back). */
+  let dirty = false;
   let verifyTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Whether the IndexedDB copy was read this session (or emptied by a reset); until then saves carry `from`. */
+  let copyRead = false;
+  /** What saves carry as `from` while the copy is unread: the counter of the stored list they build on (-1: none). */
+  let from = -1;
   let restoreStarted = false;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
 
-  /** Takes in what a read of storage says. */
-  function know(r: StoredCollection): void {
-    extras = r.extras;
-    seen = r.raw;
-    gen = Math.max(gen, r.gen);
+  const last = (): KnownList | undefined => known[known.length - 1];
+
+  function remember(list: KnownList): void {
+    known.push(list);
+    if (known.length > MAX_KNOWN) known.splice(0, known.length - MAX_KNOWN);
   }
 
   /**
-   * Reads a save back a moment later. Safari's setItem returns before its storage process has written the value,
-   * and when that write fails (a full phone) Safari quietly goes back to the old value. One more try, then the
+   * How what storage holds relates to what this page knows: the last known list ('same'); an older one, or nothing
+   * although something was stored ('behind': storage went back, so memory is newer); or a list this page never saw
+   * ('new': another tab saved it).
+   */
+  function classify(r: OkCollection): 'same' | 'behind' | 'new' {
+    const l = last();
+    if (l && r.raw === l.raw) return 'same';
+    if (r.raw === null ? known.some((k) => k.raw !== null) : known.some((k) => k.raw === r.raw)) return 'behind';
+    return 'new';
+  }
+
+  /**
+   * Takes in a list another tab saved, with this page's changes put back on top: those since the list that save
+   * started from (the known list with the highest counter below its own; without one, every card memory has).
+   */
+  function takeIn(r: OkCollection): void {
+    let base: KnownList | undefined;
+    for (const k of known) if (k.gen < r.gen && (!base || k.gen >= base.gen)) base = k;
+    const mine = value ?? [];
+    const next = base ? rebase(base.items, mine, r.items) : union(r.items, mine);
+    remember({ raw: r.raw, gen: r.gen, items: r.items });
+    extras = r.extras;
+    if (r.raw !== null) from = r.from ?? r.gen;
+    dirty = next !== r.items;
+    value = next;
+  }
+
+  /** Takes in what storage holds now (see classify). */
+  function sync(r: OkCollection): 'same' | 'behind' | 'new' {
+    const seen = classify(r);
+    gen = Math.max(gen, r.gen);
+    if (seen === 'same') {
+      extras = r.extras;
+    } else if (seen === 'behind') {
+      // Forget the saves storage lost (no other tab saw them); memory is saved again from here.
+      if (r.raw !== null) known.splice(known.map((k) => k.raw).lastIndexOf(r.raw) + 1);
+      dirty = !sameList(value ?? [], r.items);
+    } else {
+      takeIn(r);
+    }
+    return seen;
+  }
+
+  /**
+   * Reads the save `raw` back a moment later. Safari's setItem returns before its storage process has written the
+   * value, and when that write fails (a full phone) Safari quietly goes back to the old value. One more try, then the
    * failure shows. Memory keeps the change either way, so the next save (or "try again") includes it.
    */
-  function verifyLater(raw: string, before: string | null, retried = false): void {
-    const s = storage();
-    if (!s) return;
+  function verifyLater(raw: string, retried: boolean): void {
     if (verifyTimer !== undefined) clearTimeout(verifyTimer);
-    check = { raw, before };
     verifyTimer = setTimeout(() => {
       verifyTimer = undefined;
-      check = undefined;
       const r = readCollection();
       if (r.state === 'ok' && r.raw === raw) return; // it stuck
-      if (r.state === 'foreign') {
-        saveFailed('unknown'); // a newer app's value: never written over
+      if (r.state !== 'ok') {
+        // Blocked now, or a newer app's value (never written over).
+        dirty = true;
+        saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
         return;
       }
-      if (r.state === 'ok' && r.raw !== null && r.raw !== before) {
-        // Another tab saved since: keep its list, and save again what only this page has.
-        know(r);
-        const merged = union(r.items, value);
-        value = merged;
-        if (merged !== r.items) write(merged, false, r.raw);
-        notify();
-        return;
+      const before = value;
+      const seen = sync(r);
+      if (seen === 'new') {
+        if (dirty) write(value!, false); // another tab saved meanwhile: this page's changes go on top
+        else if (!saveState.saved) markSaved(saveState.lastSavedAt);
+      } else if (dirty) {
+        // Storage went back to an older list (or lost it): Safari dropped the save.
+        if (retried) saveFailed('unknown');
+        else write(value!, false, true);
+      } else if (!saveState.saved) {
+        markSaved(saveState.lastSavedAt);
       }
-      // Storage went back to what it held before (or lost it): Safari dropped the write.
-      if (!retried && r.state === 'ok') {
-        try {
-          s.setItem(COLLECTION_KEY, raw);
-          verifyLater(raw, before, true);
-          return;
-        } catch {
-          // full or blocked: report below
-        }
-      }
-      if (r.state === 'ok') seen = r.raw; // what storage really holds: the next save starts from memory, not from it
-      saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
+      if (value !== before) notify();
     }, VERIFY_AFTER_MS);
   }
 
   /**
-   * Writes `next` (plus the entries this version can't read) as the next save. `before`: what storage holds now.
-   * `shrunk`: a card went away, so the IndexedDB copy is written right away.
+   * Writes `next` (plus the entries this version can't read) as the next save, and reads it back later. `shrunk`: a
+   * card went away, so the IndexedDB copy is written right away. `retried`: the second try of a save Safari dropped.
    */
-  function write(next: CollectionItem[], shrunk: boolean, before: string | null): boolean {
+  function write(next: CollectionItem[], shrunk: boolean, retried = false): boolean {
     const data = [...next, ...extras];
-    const nextGen = gen + 1;
-    let w = writeEnvelope(COLLECTION_KEY, data, nextGen);
+    const meta = copyRead ? { gen: gen + 1 } : { gen: gen + 1, from };
+    let w = writeEnvelope(COLLECTION_KEY, data, meta);
     // Photos give way to cards: drop the older ones and try again.
-    while (!w.ok && w.problem === 'full' && freeThumbSpace()) w = writeEnvelope(COLLECTION_KEY, data, nextGen);
+    while (!w.ok && w.problem === 'full' && freeThumbSpace()) w = writeEnvelope(COLLECTION_KEY, data, meta);
     if (!w.ok) {
+      dirty = true;
       saveFailed(w.problem);
       return false;
     }
-    gen = nextGen;
-    seen = w.raw;
+    gen = meta.gen;
+    remember({ raw: w.raw, gen, items: next });
+    dirty = false;
     markSaved(new Date().toISOString());
     saveMirror(data, gen);
     if (shrunk) void flushMirror();
-    verifyLater(w.raw, before);
+    verifyLater(w.raw, retried);
+    // The copy couldn't be read at startup (IndexedDB failed or was slow): try again.
+    if (!copyRead && restoreStarted) void restoreFromMirror();
     return true;
   }
 
@@ -514,7 +640,12 @@ const collection = (() => {
     if (value === undefined) {
       const r = readCollection();
       value = r.items;
-      if (r.state === 'ok') know(r);
+      if (r.state === 'ok') {
+        known = [{ raw: r.raw, gen: r.gen, items: r.items }];
+        extras = r.extras;
+        gen = Math.max(gen, r.gen);
+        if (r.raw !== null) from = r.from ?? r.gen;
+      }
       if (!restoreStarted && typeof window !== 'undefined') {
         restoreStarted = true;
         // After the first render, off the startup path.
@@ -525,95 +656,114 @@ const collection = (() => {
   }
 
   /**
-   * Applies `op` to what storage holds now plus the cards only this page has, and saves the result. Storage that
-   * can't be read, or holds something this version doesn't understand, is never written over. `force` writes even
-   * when nothing changed (trying a failed save again).
+   * Applies `op` to what storage holds now (with this page's changes on top: see sync) and saves the result. Storage
+   * that can't be read, or holds something this version doesn't understand, is never written over. `force` writes
+   * even when nothing changed (trying a failed save again).
    */
   function mutate(op: (items: CollectionItem[]) => CollectionItem[], force = false): boolean {
+    const shown = get();
     const r = readCollection();
-    if (r.state === 'ok') gen = Math.max(gen, r.gen);
-    // Storage that suddenly holds nothing although cards were stored before is a hiccup: keep what memory knows.
-    const lost = r.state === 'ok' && r.raw === null && !!seen;
-    if (r.state === 'ok' && !lost) extras = r.extras;
-    // Storage went back to what it held before the save being read back: Safari dropped it, memory is newer.
-    const dropped = r.state === 'ok' && check !== undefined && r.raw === check.before;
-    // Storage still holds what this page last read or wrote: memory is the same list (plus any card not saved yet).
-    const same = r.state === 'ok' && value !== undefined && (r.raw === seen || dropped);
-    const base = r.state !== 'ok' ? (value ?? []) : same ? value! : union(r.items, value);
-    const next = op(base);
-    const before = value?.length ?? r.items.length;
     if (r.state !== 'ok') {
-      value = next;
-      if (next !== base || force) saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
-      if (next !== base) notify();
-      return false;
-    }
-    if (!force && !lost && next === base && (same ? saveState.saved : next === r.items)) {
-      // Nothing to write: storage already holds exactly this (a dropped save is still being read back).
-      if (!same) {
+      const next = op(shown);
+      if (next !== shown) {
         value = next;
-        seen = r.raw;
+        dirty = true;
         notify();
       }
+      if (next !== shown || force) saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
+      return false;
+    }
+    sync(r);
+    const base = value!;
+    const next = op(base);
+    if (!force && next === base && !dirty) {
+      // Nothing to write: storage already holds exactly this.
+      if (base !== shown) notify();
       if (!saveState.saved) markSaved(saveState.lastSavedAt);
       return true;
     }
     value = next;
-    const saved = write(next, next.length < before, r.raw);
+    const saved = write(next, next.length < base.length);
     notify();
     return saved;
   }
 
   /** Replaces everything (Reset all data); the IndexedDB copy is emptied too. */
   function set(next: CollectionItem[]): boolean {
+    get();
     const r = readCollection();
     if (r.state === 'ok') gen = Math.max(gen, r.gen);
+    // The counter jumps to the clock, so the reset outranks every copy saved before it, even one this page couldn't
+    // read (and so couldn't know the counter of).
+    gen = Math.max(gen, Date.now());
+    copyRead = true; // nothing in the copy is wanted any more
     extras = [];
     value = next;
-    const saved = write(next, false, r.state === 'ok' ? r.raw : null);
+    const saved = write(next, false);
     if (saved) void clearMirror(gen);
     notify();
     return saved;
   }
 
-  /** Back in the foreground: show what another tab saved meanwhile. Only adds and updates; never drops a card. */
-  function refresh(): void {
-    // A save still being read back decides for itself (verifyLater): storage may have just gone back to the old list.
-    if (value === undefined || verifyTimer !== undefined) return;
-    const r = readCollection();
-    if (r.state !== 'ok' || r.raw === seen || (r.raw === null && seen)) return;
-    know(r);
-    value = union(r.items, value);
-    notify();
-  }
-
-  /** Brings the IndexedDB copy up to date when everything shown is saved. */
-  function copyToMirror(): void {
-    if (value !== undefined && saveState.saved && seen !== undefined) saveMirror([...value, ...extras], gen);
+  /** Takes in a list another tab saved, saves this page's changes on top of it, and says whether all is saved. */
+  function absorb(r: OkCollection): void {
+    const before = value;
+    sync(r);
+    if (dirty) write(value!, false);
+    else if (!saveState.saved) markSaved(saveState.lastSavedAt);
+    if (value !== before) notify();
   }
 
   /**
-   * Puts back what the IndexedDB copy has and localStorage lost. Only a copy newer than the stored list counts (or
-   * any copy when nothing is stored): an older copy fell behind a removal or a reset. Cards in both are merged like a
-   * backup (the larger count wins). Returns how many cards (copies) came back.
+   * Back in the foreground: take in what another tab saved meanwhile, and save again what storage lost (a save still
+   * being read back is left to verifyLater). Tries the IndexedDB copy again if it couldn't be read yet.
+   */
+  function refresh(): void {
+    if (value === undefined) return;
+    const r = readCollection();
+    if (r.state === 'ok') {
+      const seen = classify(r);
+      if (seen === 'new') absorb(r);
+      else if (seen === 'behind' && verifyTimer === undefined) {
+        sync(r);
+        if (dirty) write(value, false);
+      }
+    }
+    if (!copyRead && restoreStarted) void restoreFromMirror();
+  }
+
+  /** Brings the IndexedDB copy up to date when everything shown is saved: the stored list with its save counter. */
+  function copyToMirror(): void {
+    const l = last();
+    if (value !== undefined && !dirty && l && l.raw !== null) saveMirror([...value, ...extras], l.gen);
+  }
+
+  /**
+   * Puts back what the IndexedDB copy has and the stored list lacks. Only a copy newer than the stored list counts
+   * (its `from` when it was saved before the copy could be read; -1 when nothing is stored): an older copy fell behind
+   * a removal or a reset. When storage can't be read, or holds something this version can't read, the copy's cards
+   * are shown, not saved. Cards in both are merged like a backup (the larger count wins). Returns how many cards
+   * (copies) came back.
    */
   function restore(copy: MirrorCopy | null): number {
-    if (value === undefined) get();
+    const shown = get();
     const r = readCollection();
-    if (r.state !== 'ok') return 0;
-    const storedGen = r.raw === null ? -1 : r.gen;
-    if (!copy || copy.gen <= storedGen) {
-      copyToMirror();
+    copyRead = true;
+    if (r.state === 'ok') {
+      const since = r.raw === null ? -1 : (r.from ?? r.gen);
+      if (!copy || copy.gen <= since) {
+        copyToMirror();
+        return 0;
+      }
+    } else if (!copy) {
       return 0;
     }
     const backup = copy.data.filter(isCollectionItem);
-    const floor = gen;
-    gen = Math.max(gen, copy.gen); // the save below must count as newer than the copy
+    gen = Math.max(gen, copy.gen); // the merged list's save must count as newer than the copy
     let restored = 0;
-    let changed = false;
-    mutate((items) => {
+    const merge = (items: CollectionItem[]): CollectionItem[] => {
       restored = 0;
-      changed = false;
+      let changed = false;
       const byKey = new Map(items.map((i) => [i.key, i] as const));
       for (const other of backup) {
         const mine = byKey.get(other.key);
@@ -624,23 +774,36 @@ const collection = (() => {
         changed = true;
       }
       return changed ? newestFirst([...byKey.values()]) : items;
-    });
-    if (!changed) {
-      gen = floor; // nothing came back: the copy only needs the stored list
-      copyToMirror();
+    };
+    if (r.state === 'ok') {
+      mutate(merge);
+      copyToMirror(); // when nothing came back, the copy only needs the stored list
+    } else {
+      const next = merge(shown);
+      if (next !== shown) {
+        value = next;
+        dirty = true;
+        saveFailed(r.state === 'blocked' ? 'blocked' : 'unknown');
+        notify();
+      }
     }
     return restored;
   }
 
+  /** What storage holds now; when it can't be read, what it held when last read or written (nothing, if never). */
+  function stored(): CollectionItem[] {
+    const r = readCollection();
+    if (r.state === 'ok') return r.items;
+    return r.state === 'blocked' ? (last()?.items ?? []) : [];
+  }
+
   if (typeof window !== 'undefined') {
-    // Another tab saved My Cards: take its list (and keep what this one hasn't saved, or seen read back, yet).
+    // Another tab saved My Cards: take its list, with this page's changes on top (storage going back is not another
+    // tab's save: verifyLater and the next change deal with that).
     window.addEventListener('storage', (e) => {
       if ((e.key !== COLLECTION_KEY && e.key !== null) || value === undefined) return;
       const r = readCollection();
-      if (r.state !== 'ok' || (r.raw === null && seen)) return;
-      know(r);
-      value = saveState.saved && verifyTimer === undefined ? r.items : union(r.items, value);
-      notify();
+      if (r.state === 'ok' && classify(r) === 'new') absorb(r);
     });
     window.addEventListener('pageshow', (e) => {
       if (e.persisted) refresh();
@@ -659,6 +822,7 @@ const collection = (() => {
     mutate,
     set,
     restore,
+    stored,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -666,17 +830,27 @@ const collection = (() => {
   };
 })();
 
+let copyReading: Promise<number> | undefined;
+
 /**
  * Puts back the cards the IndexedDB copy has and localStorage lost (mirror.ts), then brings the copy up to date.
- * Runs once, shortly after My Cards is first read. Returns how many cards came back (onCollectionRestored is told).
- * A copy that can't be read is left alone: it may hold the cards localStorage lost (next launch tries again).
+ * Runs shortly after My Cards is first read. A copy that can't be read is left alone (it may hold the very cards
+ * localStorage lost) and tried again after the next save and when the app comes back to the foreground. Returns how
+ * many cards came back (onCollectionRestored is told).
  */
-export async function restoreFromMirror(): Promise<number> {
-  const copy = await readMirror();
-  if (copy === undefined) return 0;
-  const restored = collection.restore(copy);
-  if (restored) restoredListeners.forEach((l) => l(restored));
-  return restored;
+export function restoreFromMirror(): Promise<number> {
+  copyReading ??= readMirror()
+    .then((copy) => {
+      if (copy === undefined) return 0;
+      const restored = collection.restore(copy);
+      if (restored) restoredListeners.forEach((l) => l(restored));
+      return restored;
+    })
+    .catch(() => 0)
+    .finally(() => {
+      copyReading = undefined;
+    });
+  return copyReading;
 }
 
 /**
@@ -711,15 +885,11 @@ export function useCollectionSaveState(): CollectionSaveState {
 }
 
 /**
- * Whether storage holds the card `key` as My Cards shows it (the same count), so it stays when the app closes even
- * while another change isn't saved yet. For a card not in My Cards: whether storage doesn't have it either.
+ * How many copies of the card `key` storage holds (0: none): what My Cards goes back to for this card when the app
+ * closes while a change isn't saved. When storage can't be read: what it held when last read or written.
  */
-export function isCardSaved(key: string): boolean {
-  const r = readCollection();
-  if (r.state !== 'ok') return false;
-  const shown = collection.get().find((i) => i.key === key);
-  const stored = r.items.find((i) => i.key === key);
-  return shown ? stored?.qty === shown.qty : !stored;
+export function storedCount(key: string): number {
+  return collection.stored().find((i) => i.key === key)?.qty ?? 0;
 }
 
 /** Tries to save My Cards again (after a failed save). Returns whether it is saved now. */
@@ -872,6 +1042,8 @@ export interface ImportResult {
   skipped: number;
   /** Whether the result is saved. */
   saved: boolean;
+  /** Why it isn't (not announced to onCollectionSaveFailed: the caller says so, with what was added). */
+  problem?: SaveProblem;
 }
 
 /** One card saved in two places: the larger count, the earlier "added" (with its first price), the newer price. */
@@ -903,25 +1075,32 @@ export function importCollection(incoming: readonly unknown[]): ImportResult {
     .map((i) => ({ ...i, key: collectionKey(i, i.variant), qty: Math.min(Math.floor(i.qty), MAX_QTY) }));
   let added = 0;
   let updated = 0;
-  const saved = collection.mutate((items) => {
-    added = updated = 0;
-    const byKey = new Map(items.map((i) => [i.key, i] as const));
-    for (const other of valid) {
-      const mine = byKey.get(other.key);
-      if (!mine) {
-        byKey.set(other.key, other);
-        added++;
-        continue;
+  quietFailures = true;
+  let saved: boolean;
+  try {
+    saved = collection.mutate((items) => {
+      added = updated = 0;
+      const byKey = new Map(items.map((i) => [i.key, i] as const));
+      for (const other of valid) {
+        const mine = byKey.get(other.key);
+        if (!mine) {
+          byKey.set(other.key, other);
+          added++;
+          continue;
+        }
+        const merged = mergeItem(mine, other);
+        if (merged !== mine) {
+          byKey.set(other.key, merged);
+          updated++;
+        }
       }
-      const merged = mergeItem(mine, other);
-      if (merged !== mine) {
-        byKey.set(other.key, merged);
-        updated++;
-      }
-    }
-    return added || updated ? newestFirst([...byKey.values()]) : items;
-  });
-  return { added, updated, skipped: incoming.length - valid.length, saved };
+      return added || updated ? newestFirst([...byKey.values()]) : items;
+    });
+  } finally {
+    quietFailures = false;
+  }
+  const result: ImportResult = { added, updated, skipped: incoming.length - valid.length, saved };
+  return saved ? result : { ...result, problem: saveState.problem ?? 'unknown' };
 }
 
 /**

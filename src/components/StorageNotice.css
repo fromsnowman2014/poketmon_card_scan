@@ -188,6 +188,19 @@
   text-align: center;
 }
 
+/* Its room is kept by an invisible copy of the words in the same grid cell, so the button above never moves. */
+.storage-notice-still-slot {
+  display: grid;
+}
+
+.storage-notice-still-slot > * {
+  grid-area: 1 / 1;
+}
+
+.storage-notice-still-room {
+  visibility: hidden;
+}
+
 /* Focused only by the app (after a save worked): no ring for that, but keep the keyboard one. */
 .storage-notice:focus:not(:focus-visible) {
   outline: none;

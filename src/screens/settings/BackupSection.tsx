@@ -47,6 +47,7 @@ type Key =
   | 'mergedOnly1'
   | 'nothingNew'
   | 'addedNotSaved'
+  | 'addedBlocked'
   | 'badCode'
   | 'oldPhone'
   | 'badFile';
@@ -57,7 +58,7 @@ const STRINGS: Strings<Key> = {
     intro:
       "홈 화면 앱, 사파리, 다른 앱 안에서 연 화면은 내 카드를 따로 저장해요. 옮기려면 한쪽에서 '백업 코드 복사'를 누르고, 다른 쪽에서 '백업 코드 붙여넣기'를 눌러요. 앱 아이콘을 지우기 전에도 꼭 백업해요.",
     introOther:
-      "다른 앱(카카오톡 등) 안에서 연 화면은 내 카드를 따로 저장해요. 옮기려면 한쪽에서 '백업 코드 복사'를 누르고, 다른 쪽에서 '백업 코드 붙여넣기'를 눌러요. 다른 폰이나 컴퓨터로 옮길 때도 똑같이 해요.",
+      "카카오톡 같은 다른 앱 안에서 연 화면은 내 카드를 따로 저장해요. 옮기려면 한쪽에서 '백업 코드 복사'를 누르고, 다른 쪽에서 '백업 코드 붙여넣기'를 눌러요. 다른 폰이나 컴퓨터로 옮길 때도 똑같이 해요.",
     copy: '백업 코드 복사',
     paste: '백업 코드 붙여넣기',
     save: '파일로 저장',
@@ -84,6 +85,7 @@ const STRINGS: Strings<Key> = {
     mergedOnly1: '이미 있던 카드 1장을 합쳤어요',
     nothingNew: '새로 가져올 카드가 없어요',
     addedNotSaved: '카드를 넣었지만 아직 저장하지 못했어요. 어른에게 보여 주세요.',
+    addedBlocked: '카드를 넣었지만 저장하지 못했어요. 이 폰은 저장이 막혀 있어요. 어른에게 보여 주세요.',
     badCode: '백업 코드가 아니에요. 다시 복사해 주세요.',
     oldPhone: "이 기기에서는 이런 백업 코드를 열 수 없어요. 다른 폰에서 '파일로 저장'을 누르고, 여기서 '파일에서 불러오기'를 눌러요.",
     badFile: '백업 파일이 아니에요. 다른 파일을 골라 주세요.',
@@ -120,6 +122,7 @@ const STRINGS: Strings<Key> = {
     mergedOnly1: 'Combined 1 card you already had.',
     nothingNew: 'No new cards to add.',
     addedNotSaved: 'Added, but not saved yet. Show a grown‑up.',
+    addedBlocked: 'Added, but not saved: saving is blocked on this phone. Show a grown‑up.',
     badCode: 'That’s not a backup code. Copy it again.',
     oldPhone: 'This phone can’t open this kind of code. On the other phone, tap Save as file, then tap Load from file here.',
     badFile: 'That’s not a backup file. Pick another one.',
@@ -410,8 +413,9 @@ export function BackupSection() {
     const result = importCollection(step.backup.items);
     setStep(null);
     if (!result.saved) {
-      // The cards show until the app is closed (and the screens say they aren't saved).
-      showToast(t('addedNotSaved'), { icon: '⚠️', durationMs: 5000 });
+      // The cards show until the app is closed (and the screens say they aren't saved). App's own "couldn't save"
+      // toast stays quiet for this one (importCollection), so this one, which also says the cards went in, stays up.
+      showToast(t(result.problem === 'blocked' ? 'addedBlocked' : 'addedNotSaved'), { icon: '⚠️', durationMs: 5000 });
       return;
     }
     // Counted like My Cards counts (copies), so "12 cards" matches the number on the other side.

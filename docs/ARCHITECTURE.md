@@ -597,8 +597,9 @@ export function backupCardCount(items: readonly unknown[]): number;   // copies 
 - `readMirror()` → `{ data, gen }` (gen 0 for a copy from before the counter), `null` when there is no copy yet, or
   `undefined` when it could not be read (no IndexedDB, an error, or no answer within 3 s).
 - Nothing is written before a read has worked in this session: a copy that could not be read may hold the very cards
-  localStorage lost, so it must not be overwritten (store.restoreFromMirror reads it right after startup).
-- `clearMirror(gen)` (Reset all data) empties it at once, without that read.
+  localStorage lost, so it must not be overwritten (store.restoreFromMirror reads it right after startup, and again
+  after the next save and when the app comes back to the foreground while it couldn't be read).
+- `clearMirror(gen)` (Reset all data) empties it at once, without that read; later copies are written from then on.
 - DB "cardcheck", store "kv", key "collection", record `{ v: 1, at, data, gen }`. `setMirrorBackend()` swaps in a
   stand-in for tests. Restore-only: localStorage stays the main copy. It can't help across storage areas: IndexedDB
   lives in the same one.
@@ -631,13 +632,16 @@ export function onCollectionSaveFailed(listener: () => void): () => void;
 export function useCollectionSaveState(): CollectionSaveState;                 // { saved, problem?: 'blocked'|'full'|'unknown', lastSavedAt? }
 export function getCollectionSaveState(): CollectionSaveState;
 export function retryCollectionSave(): boolean;                                 // writes what My Cards shows again
-export function isCardSaved(key: string): boolean;                             // storage holds this card as shown (same qty)
+export function storedCount(key: string): number;                              // copies of this card storage holds (0: none):
+//   what it goes back to when the app closes while a change isn't saved; when storage can't be read, what it last held
 export function onCollectionRestored(listener: (count: number) => void): () => void; // copies (Σ qty) put back from the IndexedDB copy
-export function restoreFromMirror(): Promise<number>;                           // runs once after the first read (browser only)
+export function restoreFromMirror(): Promise<number>;                           // after the first read (browser only); again
+//   after the next save and on coming back to the app while the copy couldn't be read (one read at a time)
 export function exportCollection(): CollectionItem[];                           // what My Cards shows, for backups
 export function importCollection(items: readonly unknown[]): ImportResult;     // merge a backup by key; never removes
 //   Same key: the larger qty, the earlier addedAt (with its firstPriceUsd), the newer price. Invalid entries are skipped,
-//   a key that doesn't match its card is rebuilt. → { added, updated, skipped, saved }.
+//   a key that doesn't match its card is rebuilt. → { added, updated, skipped, saved, problem? }. A failed save is not
+//   announced to onCollectionSaveFailed: the caller says so itself, with what was added (BackupSection).
 export function isCollectionItem(x: unknown): x is CollectionItem;
 export function askPersistentStorage(): void;                                   // navigator.storage.persist(), once
 export function setCollectionThumb(key: string, dataUrl: string): void;        // user's photo for a saved card ("cc:thumbs")
@@ -659,21 +663,32 @@ export function resetAllData(): void;                                           
 //   in their own key, capped at 1.2 M characters (~60 photos, newest kept), and give way to My Cards when storage is
 //   full; pass small JPEGs (~200px wide).
 // My Cards never loses a card through the app (store.ts "My Cards" comment):
-//   - each change applies to what storage holds now plus the cards only this page has (a change not saved yet, or a
-//     card storage lost); a card only goes away through removeFromCollection / setQuantity(0) / resetAllData;
+//   - "cc:collection" is { v: 1, data, gen, from? }. Every save writes the highest gen this page knows + 1 (stored
+//     lists, its own saves, the IndexedDB copy); Reset all data jumps it to the clock (Date.now()), so a reset
+//     outranks every copy saved before it;
+//   - each page remembers the last few lists storage held (read there or saved by it, with their gen). Each change
+//     starts from what storage holds now: the last known list → memory (it may hold a change not saved yet); an older
+//     known list, or nothing although something was stored → storage went back (Safari dropped a save, or lost the
+//     list), so memory wins and is saved again; a list it never saw → another tab saved it: that list is taken and
+//     this page's own changes since the list that save started from (the known one with the highest gen below its
+//     own) go back on top (rebase: a card added here stays, a card removed in either tab goes, a card changed in both
+//     is merged). The same happens when another tab's storage event arrives and when the app comes back to the
+//     foreground. A card only goes away through removeFromCollection / setQuantity(0) / resetAllData (in any tab);
 //   - stored entries this version can't validate are hidden but written back untouched; a value it can't read at all
 //     (a newer app) is never written over (the change shows, marked not saved);
 //   - a save is read back 1.5 s later (Safari's setItem returns before its storage process writes, and quietly goes
-//     back to the old value when that write fails); one more try, then "not saved". Memory keeps the change: storage
-//     having gone back to the old list never wins over it (a tap in the meantime builds on what the kid sees, and the
-//     next save or "try again" writes it). Coming back to the app, or another tab saving, doesn't cancel the read-back;
-//     another tab's list is taken with the cards only this page has, and saved again;
-//   - "cc:collection" also holds a save counter, { v: 1, data, gen }: every save writes the highest gen this page knows
-//     + 1 (stored lists, its own saves, the IndexedDB copy);
+//     back to the old value when that write fails, even after several quick saves); one more try, then "not saved".
+//     Memory keeps the change, so the next save or "try again" writes it;
 //   - a copy lives in IndexedDB (lib/mirror.ts, written after every successful save with its gen). restoreFromMirror
 //     uses it only when it is newer than the stored list (or nothing is stored): it merges its cards in like a backup
 //     (the larger count wins) and tells onCollectionRestored how many copies came back. An older copy fell behind a
-//     removal or a reset and is only brought up to date; one that can't be read is left alone until a later launch.
+//     removal or a reset and is only brought up to date. Saves made while the copy couldn't be read carry `from`, the
+//     gen of the stored list they build on (-1: nothing was stored, e.g. localStorage was wiped), and the copy is
+//     compared with that instead, at whichever launch can read it. When the stored list can't be read (corrupt, a
+//     newer app, blocked), the copy's cards are shown, marked not saved.
+//     Known gap: a tab still running a version from before `gen` that removes a card after this version saved makes
+//     the copy look newer, and the card comes back (the same signature as storage going back to a list saved before
+//     this version, which the copy must rescue).
 //   What code can't change: iOS keeps separate storage for each Home Screen icon, Safari, each Private tab (erased when
 //   it closes) and each app's built-in browser. The app says where it is (lib/storageContext.ts, StorageNotice, Settings
 //   "Where My Cards is saved") and moves cards between them with backup codes / files (lib/backup.ts).

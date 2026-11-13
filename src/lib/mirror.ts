@@ -128,13 +128,13 @@ export interface MirrorCopy {
 const isRecord = (x: unknown): x is MirrorRecord =>
   typeof x === 'object' && x !== null && (x as MirrorRecord).v === 1 && Array.isArray((x as MirrorRecord).data);
 
-/** True once a read has worked this session (see flushMirror). */
+/** True once a read has worked this session, or the copy was emptied (see flushMirror). */
 let readOk = false;
 
 /**
  * The last copy. Null when there is none yet; undefined when it could not be read (no IndexedDB, an error, or no
  * answer within 3 s). A copy that could not be read may hold the very cards localStorage lost, so until a read has
- * worked, nothing is written over it (flushMirror waits).
+ * worked, nothing is written over it (flushMirror waits; store.ts reads again after the next save).
  */
 export async function readMirror(): Promise<MirrorCopy | null | undefined> {
   const b = getBackend();
@@ -187,16 +187,17 @@ export function saveMirror(data: readonly unknown[], gen: number): void {
 }
 
 /**
- * Reset all data: empties the copy right away, without reading it first (nothing in it is wanted any more). `gen`:
- * the save counter of the emptied localStorage list.
+ * Reset all data: empties the copy right away, without reading it first (nothing in it is wanted any more, so later
+ * copies are written whether or not a read ever worked). `gen`: the save counter of the emptied localStorage list.
  */
 export async function clearMirror(gen: number): Promise<void> {
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
   pending = undefined;
+  readOk = true;
   const b = getBackend();
   if (!b) return;
-  if (await writeRecord(b, { data: [], gen })) readOk = true;
-  // Failed: the next flush tries again. Until then the old copy's lower counter keeps its cards out (store.ts).
-  else pending = { data: [], gen };
+  // Failed: the next flush tries again, unless a newer copy is waiting by then. Until then the old copy's lower
+  // counter keeps its cards out (store.ts).
+  if (!(await writeRecord(b, { data: [], gen }))) pending ??= { data: [], gen };
 }

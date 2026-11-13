@@ -545,6 +545,30 @@ describe('collection: a saved card is never lost by the app', () => {
     expect(keys(peek(store.useCollection))).toEqual(['ja:SV8a-001:normal']); // shown for this session
   });
 
+  it('storedCount: what storage holds, or what it held when last read or written', async () => {
+    const storage = new BlockedStorage();
+    storage.blocked = false;
+    await freshStore(storage);
+    add('SV8a-001');
+    expect(store.storedCount('ja:SV8a-001:normal')).toBe(1);
+    expect(store.storedCount('ja:SV8a-002:normal')).toBe(0);
+    storage.blocked = true;
+    add('SV8a-001'); // not saved
+    expect(store.storedCount('ja:SV8a-001:normal')).toBe(1);
+  });
+
+  it('a backup brought in on blocked storage is shown, and the import itself says why it is not saved', async () => {
+    add('SV8a-001');
+    const backup = store.exportCollection();
+    await freshStore(new BlockedStorage());
+    const failed = vi.fn();
+    store.onCollectionSaveFailed(failed);
+    expect(store.importCollection(backup)).toMatchObject({ added: 1, saved: false, problem: 'blocked' });
+    expect(failed).not.toHaveBeenCalled(); // the import's own message is the one the kid sees
+    expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'blocked' });
+    expect(keys(peek(store.useCollection))).toEqual(['ja:SV8a-001:normal']);
+  });
+
   it('reports blocked storage until a save works, then saves what only memory had', async () => {
     const storage = new BlockedStorage();
     await freshStore(storage);
@@ -711,6 +735,52 @@ describe('collection: a saved card is never lost by the app', () => {
       settle();
       expect(counts(onDisk())).toEqual(['001×3']);
       expect(store.getCollectionSaveState().saved).toBe(true);
+    });
+
+    it('two taps before Safari goes back: both are kept, and the drop is reported', () => {
+      add('SV8a-001');
+      settle();
+      phone.full = true;
+      add('SV8a-001'); // 2
+      vi.advanceTimersByTime(5);
+      add('SV8a-001'); // 3: storage still shows 2, Safari hasn't gone back to 1 yet
+      settle();
+      expect(counts(store.exportCollection())).toEqual(['001×3']);
+      expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'unknown' });
+      phone.full = false;
+      expect(store.retryCollectionSave()).toBe(true);
+      settle();
+      expect(counts(onDisk())).toEqual(['001×3']);
+      expect(store.getCollectionSaveState().saved).toBe(true);
+    });
+
+    it('a removal and a +1 before Safari goes back: the card stays removed and the +1 stays', () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      settle();
+      phone.full = true;
+      store.removeFromCollection('ja:SV8a-002:normal');
+      vi.advanceTimersByTime(5);
+      add('SV8a-001');
+      settle();
+      expect(counts(store.exportCollection())).toEqual(['001×2']);
+      expect(store.getCollectionSaveState().saved).toBe(false);
+      phone.full = false;
+      add('SV8a-003');
+      settle();
+      expect(counts(onDisk())).toEqual(['003×1', '001×2']);
+    });
+
+    it('a dropped "remove one": storedCount says what the card goes back to', () => {
+      add('SV8a-001');
+      add('SV8a-001');
+      settle();
+      phone.full = true;
+      store.setQuantity('ja:SV8a-001:normal', 1);
+      settle();
+      expect(store.getCollectionSaveState().saved).toBe(false);
+      expect(store.storedCount('ja:SV8a-001:normal')).toBe(2);
+      expect(store.storedCount('ja:SV8a-009:normal')).toBe(0);
     });
 
     describe('with the app going to the background and back, and other tabs', () => {
@@ -914,6 +984,174 @@ describe('collection: a saved card is never lost by the app', () => {
       copy = { v: 1, at: '2026-11-01T00:00:00.000Z', data: copied() }; // no `gen`
       ls.removeItem('cc:collection');
       expect(await relaunch()).toBe(1);
+    });
+
+    it('a copy that could not be read brings its cards back even after many saves at that launch', async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror(); // the copy's counter: 2
+      ls.removeItem('cc:collection'); // lost while the app was closed…
+      await reload();
+      readFails = 1; // …and the copy can't be read at this launch
+      expect(await launch()).toBe(0);
+      add('SV8a-003');
+      add('SV8a-004');
+      add('SV8a-005'); // counted up past the copy's counter
+      await mirror.flushMirror();
+      expect(keys(copied())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']); // not written over
+      expect(await relaunch()).toBe(2);
+      expect(keys(saved()).sort()).toEqual(['001', '002', '003', '004', '005'].map((n) => `ja:SV8a-${n}:normal`));
+    });
+
+    it('a card removed while the copy could not be read does not come back from it later', async () => {
+      const key = add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      await reload();
+      readFails = 1;
+      expect(await launch()).toBe(0);
+      store.removeFromCollection(key);
+      expect(await relaunch()).toBe(0);
+      expect(keys(saved())).toEqual(['ja:SV8a-002:normal']);
+    });
+
+    it('a reset is not undone by an old copy that could neither be read nor emptied', async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      ls.removeItem('cc:collection');
+      await reload();
+      readFails = 1;
+      expect(await launch()).toBe(0); // this page never learns the copy's counter
+      writeFails = true;
+      store.resetAllData();
+      await Promise.resolve();
+      writeFails = false;
+      expect(copied()).toHaveLength(2);
+      expect(await relaunch()).toBe(0);
+      expect(saved()).toEqual([]);
+    });
+
+    it('reads the copy again after a save when it could not be read at startup, and keeps it up to date', async () => {
+      add('SV8a-001');
+      await mirror.flushMirror();
+      vi.stubGlobal('window', new EventTarget()); // a page in a browser: it reads the copy by itself after the first render
+      await reload();
+      readFails = 2; // this launch's read, and the one the page starts by itself
+      expect(await launch()).toBe(0);
+      await new Promise((r) => setTimeout(r, 0));
+      add('SV8a-002'); // reads the copy again (it works now)
+      await new Promise((r) => setTimeout(r, 0));
+      await mirror.flushMirror();
+      expect(keys(copied())).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-001:normal']);
+      vi.unstubAllGlobals();
+    });
+
+    it("shows the copy's cards (not saved) when the stored list can't be read, and never writes over it", async () => {
+      add('SV8a-001');
+      add('SV8a-002');
+      await mirror.flushMirror();
+      const broken = '{"v":1,"data":[{"broken":tr';
+      ls.setItem('cc:collection', broken);
+      await reload();
+      const failed = vi.fn();
+      store.onCollectionSaveFailed(failed);
+      expect(await launch()).toBe(2);
+      expect(keys(peek(store.useCollection)).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal']);
+      expect(store.getCollectionSaveState()).toMatchObject({ saved: false, problem: 'unknown' });
+      expect(failed).toHaveBeenCalled();
+      add('SV8a-003');
+      expect(ls.getItem('cc:collection')).toBe(broken);
+    });
+  });
+
+  describe('two tabs', () => {
+    /** Another page of the app on the same storage: its own store module and window (it hears storage events). */
+    async function openPage() {
+      const win = new EventTarget();
+      vi.stubGlobal('window', win);
+      vi.resetModules();
+      const page = await import('./store');
+      page.exportCollection(); // first render
+      return { page, win };
+    }
+    /** The storage event another page's save fires in this one. */
+    const tell = (win: EventTarget) => win.dispatchEvent(Object.assign(new Event('storage'), { key: 'cc:collection' }));
+    const addOn = (page: typeof store, id: string) => page.addToCollection(card(id, [variant('normal', 1)]), 'normal');
+    const collectionWrites = () => {
+      let n = 0;
+      const set = ls.setItem.bind(ls);
+      vi.spyOn(ls, 'setItem').mockImplementation((k, v) => {
+        if (k === 'cc:collection') n++;
+        set(k, v);
+      });
+      return () => n;
+    };
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('a card removed in another tab while this page reads its own save back stays removed', async () => {
+      const a = await openPage();
+      addOn(a.page, 'SV8a-001');
+      addOn(a.page, 'SV8a-002');
+      vi.advanceTimersByTime(3000);
+      const b = await openPage();
+      addOn(a.page, 'SV8a-003'); // A reads it back 1.5 s later
+      tell(b.win);
+      vi.advanceTimersByTime(500);
+      b.page.removeFromCollection('ja:SV8a-001:normal');
+      tell(a.win);
+      vi.advanceTimersByTime(5000);
+      expect(keys(saved()).sort()).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+      expect(keys(a.page.exportCollection()).sort()).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+    });
+
+    it('Reset all data in another tab sticks, even right after this page saved', async () => {
+      const a = await openPage();
+      addOn(a.page, 'SV8a-001');
+      vi.advanceTimersByTime(3000);
+      const b = await openPage();
+      addOn(a.page, 'SV8a-002');
+      tell(b.win);
+      vi.advanceTimersByTime(300);
+      b.page.resetAllData();
+      tell(a.win);
+      vi.advanceTimersByTime(5000);
+      expect(saved()).toEqual([]);
+      expect(a.page.exportCollection()).toEqual([]);
+    });
+
+    it("another tab's save that never saw this page's last change: both changes stay, in one more write", async () => {
+      const a = await openPage();
+      addOn(a.page, 'SV8a-001');
+      addOn(a.page, 'SV8a-002');
+      vi.advanceTimersByTime(3000);
+      const before = JSON.parse(ls.getItem('cc:collection')!) as { v: number; data: Item[]; gen: number };
+      addOn(a.page, 'SV8a-003');
+      const writes = collectionWrites();
+      // Another tab, which never saw 003, removes 001 (its save counts up from the list it read).
+      const theirs = before.data.filter((i) => i.localId !== '001');
+      ls.setItem('cc:collection', JSON.stringify({ v: 1, data: theirs, gen: before.gen + 1 }));
+      tell(a.win);
+      vi.advanceTimersByTime(5000);
+      expect(keys(saved()).sort()).toEqual(['ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+      expect(writes()).toBe(2); // theirs, then this page's change on top
+    });
+
+    it('two tabs adding a card each: both stay, and the pages settle without writing back and forth', async () => {
+      const a = await openPage();
+      addOn(a.page, 'SV8a-001');
+      vi.advanceTimersByTime(3000);
+      const b = await openPage();
+      const writes = collectionWrites();
+      addOn(a.page, 'SV8a-002');
+      addOn(b.page, 'SV8a-003');
+      tell(b.win);
+      tell(a.win);
+      vi.advanceTimersByTime(10_000);
+      expect(keys(saved()).sort()).toEqual(['ja:SV8a-001:normal', 'ja:SV8a-002:normal', 'ja:SV8a-003:normal']);
+      expect(keys(a.page.exportCollection()).sort()).toEqual(keys(saved()).sort());
+      expect(writes()).toBe(2);
     });
   });
 });

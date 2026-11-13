@@ -57,7 +57,7 @@ const STRINGS: Strings<Key> = {
     browserLine: '이 브라우저에만 저장돼요 · 홈 화면 앱과 따로예요',
     install: '홈 화면에 추가하는 법',
     move: '카드 옮기기',
-    bringText: '사파리나 다른 앱(카카오톡 등)에서 모은 카드가 있나요? 그 카드는 거기에 그대로 있어요.',
+    bringText: '사파리나 카카오톡 같은 다른 앱에서 모은 카드가 있나요? 그 카드는 거기에 그대로 있어요.',
     bringLink: '여기로 옮겨 오기',
   },
   en: {
@@ -200,16 +200,25 @@ function Actions({
           <Icon name="refresh" size={18} />
           {t('saveAgain')}
         </button>
-        {/* Under the button, so nothing moves under the finger; always there, so screen readers hear it appear. */}
+        {/*
+          Under the button, with its room kept from the start: the sheet grows up from the bottom of the screen, so a
+          line that turned up would push the button away from under the finger. Always there, so screen readers hear
+          the words appear.
+        */}
         {inSheet && (
-          <p className="small storage-notice-still" role="status">
-            {stillFailing && (
-              <>
-                <span aria-hidden="true">⚠️ </span>
-                {t('stillUnsaved')}
-              </>
-            )}
-          </p>
+          <div className="storage-notice-still-slot">
+            <p className="small storage-notice-still storage-notice-still-room" aria-hidden="true">
+              ⚠️ {t('stillUnsaved')}
+            </p>
+            <p className="small storage-notice-still" role="status">
+              {stillFailing && (
+                <>
+                  <span aria-hidden="true">⚠️ </span>
+                  {t('stillUnsaved')}
+                </>
+              )}
+            </p>
+          </div>
         )}
       </div>
     );
